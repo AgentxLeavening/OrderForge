@@ -1,7 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+
+type ClientOption = {
+  id: string
+  name: string
+}
 
 type Props = {
   userId: string
@@ -12,10 +17,26 @@ type Props = {
 export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
   const [title, setTitle] = useState('')
   const [type, setType] = useState('commission')
+  const [selectedClientId, setSelectedClientId] = useState('')
+  const [clients, setClients] = useState<ClientOption[]>([])
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    const fetchClients = async () => {
+      const { data } = await supabase
+        .from('clients')
+        .select('id, name')
+        .eq('user_id', userId)
+        .order('name', { ascending: true })
+
+      setClients(data || [])
+    }
+
+    fetchClients()
+  }, [userId])
 
   const handleCreate = async () => {
     if (!title.trim()) {
@@ -30,6 +51,7 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
 
     const { error } = await supabase.from('orders').insert({
       user_id: userId,
+      client_id: selectedClientId || null,
       title,
       type,
       due_date: dueDate || null,
@@ -85,6 +107,20 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
               <option value="card_lot">🃏 Card Lot</option>
               <option value="wholesale">📦 Wholesale</option>
               <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-sm text-gray-400 mb-1 block">Client</label>
+            <select
+              value={selectedClientId}
+              onChange={e => setSelectedClientId(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-indigo-500"
+            >
+              <option value="">No client selected</option>
+              {clients.map(client => (
+                <option key={client.id} value={client.id}>{client.name}</option>
+              ))}
             </select>
           </div>
 

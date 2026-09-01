@@ -26,6 +26,11 @@ type LineItem = {
   unit_price: number
 }
 
+type ClientOption = {
+  id: string
+  name: string
+}
+
 const TYPE_OPTIONS = [
   { value: 'commission', label: '🎨 Commission / Craft' },
   { value: 'print_job', label: '🖨️ 3D Print Job' },
@@ -55,6 +60,7 @@ export default function OrderDetailPage() {
 
   const [order, setOrder] = useState<Order | null>(null)
   const [lineItems, setLineItems] = useState<LineItem[]>([])
+  const [clientOptions, setClientOptions] = useState<ClientOption[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -63,6 +69,7 @@ export default function OrderDetailPage() {
   const [title, setTitle] = useState('')
   const [type, setType] = useState('')
   const [status, setStatus] = useState('')
+  const [clientId, setClientId] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
 
@@ -85,10 +92,18 @@ export default function OrderDetailPage() {
 
       if (!orderData) { router.push('/dashboard'); return }
 
+      const { data: clients } = await supabase
+        .from('clients')
+        .select('id, name')
+        .eq('user_id', user.id)
+        .order('name', { ascending: true })
+
+      setClientOptions(clients || [])
       setOrder(orderData)
       setTitle(orderData.title)
       setType(orderData.type)
       setStatus(orderData.status)
+      setClientId(orderData.client_id || '')
       setDueDate(orderData.due_date || '')
       setNotes(orderData.notes || '')
 
@@ -113,6 +128,7 @@ export default function OrderDetailPage() {
         title,
         type,
         status,
+        client_id: clientId || null,
         due_date: dueDate || null,
         notes,
         updated_at: new Date().toISOString(),
@@ -170,6 +186,14 @@ const handleGenerateInvoice = async () => {
     .eq('id', user.id)
     .single()
 
+  const { data: clientData } = clientId
+    ? await supabase
+        .from('clients')
+        .select('name, email')
+        .eq('id', clientId)
+        .single()
+    : { data: null }
+
   const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`
   const subtotal = lineItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
   const taxRate = profile?.default_tax_rate || 0
@@ -196,6 +220,8 @@ const handleGenerateInvoice = async () => {
     invoiceNumber,
     businessName: profile?.business_name || 'My Shop',
     ownerName: profile?.name || '',
+    clientName: clientData?.name || undefined,
+    clientEmail: clientData?.email || undefined,
     createdAt: new Date().toLocaleDateString(),
     dueDate: dueDate ? new Date(dueDate).toLocaleDateString() : undefined,
     lineItems,
@@ -204,7 +230,7 @@ const handleGenerateInvoice = async () => {
   })
 
   // Download it
- const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' })
+  const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -262,6 +288,20 @@ const handleGenerateInvoice = async () => {
               >
                 {TYPE_OPTIONS.map(o => (
                   <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm text-gray-400 mb-1 block">Client</label>
+              <select
+                value={clientId}
+                onChange={e => setClientId(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500"
+              >
+                <option value="">No client selected</option>
+                {clientOptions.map(client => (
+                  <option key={client.id} value={client.id}>{client.name}</option>
                 ))}
               </select>
             </div>
