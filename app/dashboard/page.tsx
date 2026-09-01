@@ -500,22 +500,6 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-950">
-      {/* Nav */}
-      <nav className="border-b border-gray-800 bg-gray-900 px-6 py-4 flex items-center justify-between">
-        <span className="text-indigo-400 font-bold text-xl">OrderForge</span>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-4">
-            <Link href="/dashboard/clients" className="text-gray-400 hover:text-white text-sm transition">
-              Clients
-            </Link>
-            <span className="text-gray-400 text-sm">{profile?.business_name || 'My Shop'}</span>
-          </div>
-          <button onClick={handleSignOut} className="text-sm text-gray-500 hover:text-white transition">
-            Sign out
-          </button>
-        </div>
-      </nav>
-
       <main className="max-w-7xl mx-auto px-6 py-10">
         {/* Header */}
         <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
