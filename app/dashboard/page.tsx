@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, type MouseEvent } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import NewOrderModal from '@/app/components/NewOrderModal'
+import DashboardWidget from '@/app/components/DashboardWidget'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import Link from 'next/link'
 
@@ -12,6 +13,7 @@ type Profile = {
   name: string
   business_name: string
   plan: string
+  dashboard_layout?: string[]
 }
 
 type ClientOption = {
@@ -50,6 +52,8 @@ const TYPE_EMOJI: Record<string, string> = {
   other: '📋',
 }
 
+const DEFAULT_LAYOUT = ['stats', 'kanban', 'analytics']
+
 export default function DashboardPage() {
   const router = useRouter()
   const [profile, setProfile] = useState<Profile | null>(null)
@@ -62,6 +66,8 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
+  const [layout, setLayout] = useState<string[]>(DEFAULT_LAYOUT)
+  const [savingLayout, setSavingLayout] = useState(false)
 
   const fetchOrders = useCallback(async (userId: string) => {
     const { data } = await supabase
@@ -137,7 +143,7 @@ export default function DashboardPage() {
 
       const { data } = await supabase
         .from('profiles')
-        .select('id, name, business_name, plan')
+        .select('id, name, business_name, plan, dashboard_layout')
         .eq('id', user.id)
         .single()
 
@@ -148,6 +154,7 @@ export default function DashboardPage() {
         .order('name', { ascending: true })
 
       setProfile(data)
+      setLayout(data?.dashboard_layout || DEFAULT_LAYOUT)
       setClients(clientData || [])
       await fetchOrders(user.id)
       setLoading(false)
@@ -177,6 +184,26 @@ export default function DashboardPage() {
       .from('orders')
       .update({ status: newStatus })
       .eq('id', draggableId)
+  }
+
+  // Widget layout drag and drop
+  const onLayoutDragEnd = async (result: DropResult) => {
+    const { destination, source } = result
+    if (!destination || destination.index === source.index) return
+
+    const newLayout = Array.from(layout)
+    const [moved] = newLayout.splice(source.index, 1)
+    newLayout.splice(destination.index, 0, moved)
+
+    setLayout(newLayout)
+    setSavingLayout(true)
+
+    await supabase
+      .from('profiles')
+      .update({ dashboard_layout: newLayout })
+      .eq('id', profile?.id)
+
+    setSavingLayout(false)
   }
 
   const filteredOrders = orders.filter(order => {
@@ -239,6 +266,229 @@ export default function DashboardPage() {
       .map(([clientId, v]) => ({ clientId, name: v.name, count: v.count }))
   })()
   const isOverdue = (due: string | null) => due && new Date(due) < new Date()
+
+  // Widget render helpers
+  const renderStats = () => (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+      {[
+        { label: 'Active Orders', value: activeOrders },
+        { label: 'Orders in View', value: filteredOrders.length },
+        { label: 'Clients in View', value: clientCount },
+      ].map(stat => (
+        <div key={stat.label} className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+          <p className="text-gray-400 text-sm mb-1">{stat.label}</p>
+          <p className="text-white text-2xl font-bold break-words">{stat.value}</p>
+        </div>
+      ))}
+    </div>
+  )
+
+  const renderAnalytics = () => (
+    <div className="grid grid-cols-1 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+          <p className="text-gray-400 text-sm mb-2">Top Clients (by orders)</p>
+          {topClients.length > 0 ? (
+            <ol className="space-y-2">
+              {topClients.map((c, i) => (
+                <li key={c.name} className="flex items-center justify-between">
+                  <span className="text-white">{i + 1}. {c.name}</span>
+                  <span className="text-gray-400 text-sm">{c.count} orders</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="text-gray-400">No client data in current view.</p>
+          )}
+        </div>
+
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+          <p className="text-gray-400 text-sm mb-2">Top Clients (by revenue)</p>
+          {topRevenueClients.length > 0 ? (
+            <ol className="space-y-2">
+              {topRevenueClients.map((c, i) => (
+                <li key={c.name} className="flex items-center justify-between">
+                  <span className="text-white">{i + 1}. {c.name}</span>
+                  <span className="text-gray-400 text-sm">${c.total.toFixed(2)}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="text-gray-400">No revenue data in current view.</p>
+          )}
+        </div>
+
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+          <p className="text-gray-400 text-sm mb-2">Invoice Counts</p>
+          {invoiceCounts.length > 0 ? (
+            <ol className="space-y-2">
+              {invoiceCounts.map(c => (
+                <li key={c.name} className="flex items-center justify-between">
+                  <span className="text-white">{c.name}</span>
+                  <span className="text-gray-400 text-sm">{c.count}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="text-gray-400">No invoices in current view.</p>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-gray-200 font-semibold mb-3">Orders Per Client</h3>
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+          {ordersPerClientTop.length > 0 ? (
+            <div className="w-full overflow-x-auto">
+              <svg viewBox={`0 0 500 160`} width="100%" height="160" preserveAspectRatio="xMinYMid meet">
+                {(() => {
+                  const paddingLeft = 120
+                  const chartWidth = 500 - paddingLeft - 20
+                  const max = Math.max(...ordersPerClientTop.map(d => d.count), 1)
+                  const barHeight = 22
+                  const gap = 12
+                  return ordersPerClientTop.map((d, i) => {
+                    const y = i * (barHeight + gap) + 10
+                    const barW = Math.round((d.count / max) * chartWidth)
+                    const fill = selectedClientId === d.clientId ? '#7c3aed' : '#4f46e5'
+                    const revenue = topRevenueClients.find(t => t.name === d.name)?.total || 0
+                    const tooltip = `${d.name}: ${d.count} orders${revenue ? ` — $${revenue.toFixed(2)}` : ''}`
+                    return (
+                      <g
+                        key={d.clientId}
+                        onClick={() => {
+                          setSelectedClientId(d.clientId === 'unassigned' ? 'all' : d.clientId)
+                          setSearchTerm('')
+                        }}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <title>{tooltip}</title>
+                        <text x={10} y={y + 15} fill="#e5e7eb" fontSize={12}>{d.name}</text>
+                        <rect x={paddingLeft} y={y} width={barW} height={barHeight} rx={6} fill={fill} style={{ transition: 'width 320ms ease, fill 180ms ease' }} />
+                        <text x={paddingLeft + barW + 8} y={y + 15} fill="#9ca3af" fontSize={12}>{d.count}</text>
+
+                        {selectedClientId === d.clientId && selectedClientId !== 'all' && (
+                          <g
+                            onClick={(e: MouseEvent) => {
+                              e.stopPropagation()
+                              setSelectedClientId('all')
+                              setSearchTerm('')
+                            }}
+                            style={{ cursor: 'pointer' }}
+                          >
+                            <circle cx={paddingLeft + barW + 28} cy={y + barHeight / 2} r={9} fill="#ef4444" />
+                            <text x={paddingLeft + barW + 28} y={y + barHeight / 2 + 4} fill="#fff" fontSize={10} textAnchor="middle">×</text>
+                          </g>
+                        )}
+                      </g>
+                    )
+                  })
+                })()}
+              </svg>
+            </div>
+          ) : (
+            <p className="text-gray-400">No orders to chart in current view.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderKanban = () => (
+    <DragDropContext onDragEnd={onDragEnd}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {COLUMNS.map(col => {
+          const colOrders = filteredOrders.filter(o => o.status === col.key)
+          return (
+            <div key={col.key} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+              {/* Column Header */}
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-white font-semibold">{col.label}</h2>
+                <span className="bg-gray-800 text-gray-400 text-xs font-bold px-2 py-1 rounded-full">
+                  {colOrders.length}
+                </span>
+              </div>
+
+              {/* Droppable Column */}
+              <Droppable droppableId={col.key}>
+                {(provided, snapshot) => (
+                  <div
+                    ref={provided.innerRef}
+                    {...provided.droppableProps}
+                    className={`space-y-3 min-h-24 rounded-xl transition ${
+                      snapshot.isDraggingOver ? 'bg-indigo-500/10 border border-indigo-500/30' : ''
+                    }`}
+                  >
+                    {colOrders.length === 0 && !snapshot.isDraggingOver && (
+                      <p className="text-gray-600 text-sm text-center py-6">No orders</p>
+                    )}
+
+                    {colOrders.map((order, index) => {
+                      const clientName = Array.isArray(order.clients)
+                        ? order.clients[0]?.name || ''
+                        : (order.clients && (order.clients as { name?: string }).name) || ''
+                      const clientIdLocal = order.client_id || ''
+
+                      return (
+                        <Draggable key={order.id} draggableId={order.id} index={index}>
+                          {(provided, snapshot) => (
+                            <div
+                              onClick={() => router.push(`/dashboard/orders/${order.id}`)}
+                              ref={provided.innerRef}
+                              {...provided.draggableProps}
+                              {...provided.dragHandleProps}
+                              className={`bg-gray-800 border rounded-xl p-4 transition cursor-grab active:cursor-grabbing ${
+                                snapshot.isDragging
+                                  ? 'border-indigo-500 shadow-lg shadow-indigo-500/20 rotate-1'
+                                  : 'border-gray-700 hover:border-indigo-500'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2 mb-2">
+                                <span className="text-white text-sm font-medium leading-snug">{order.title}</span>
+                                <span className="text-lg shrink-0">{TYPE_EMOJI[order.type] || '📋'}</span>
+                              </div>
+
+                              <p className="text-gray-500 text-xs mb-2">{order.order_number}</p>
+
+                              <div className="mb-2">
+                                {clientName ? (
+                                  clientIdLocal ? (
+                                    <Link
+                                      href={`/dashboard/clients/${clientIdLocal}`}
+                                      onClick={e => e.stopPropagation()}
+                                      className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full hover:bg-indigo-500 hover:text-white transition"
+                                    >
+                                      {clientName}
+                                    </Link>
+                                  ) : (
+                                    <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full">{clientName}</span>
+                                  )
+                                ) : (
+                                  <span className="text-xs text-gray-400">Unassigned</span>
+                                )}
+                              </div>
+
+                              {order.due_date && (
+                                <p className={`text-xs ${isOverdue(order.due_date) ? 'text-red-400' : 'text-gray-400'}`}>
+                                  Due {new Date(order.due_date).toLocaleDateString()}
+                                  {isOverdue(order.due_date) && ' ⚠️'}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </Draggable>
+                      )
+                    })}
+                    {provided.placeholder}
+                  </div>
+                )}
+              </Droppable>
+            </div>
+          )
+        })}
+      </div>
+    </DragDropContext>
+  )
 
   if (loading) {
     return (
@@ -315,222 +565,33 @@ export default function DashboardPage() {
           </select>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-10">
-          {[
-            { label: 'Active Orders', value: activeOrders },
-            { label: 'Orders in View', value: filteredOrders.length },
-            { label: 'Clients in View', value: clientCount },
-          ].map(stat => (
-            <div key={stat.label} className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-              <p className="text-gray-400 text-sm mb-1">{stat.label}</p>
-              <p className="text-white text-2xl font-bold break-words">{stat.value}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Client Analytics */}
-        <div className="mb-10 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-            <p className="text-gray-400 text-sm mb-2">Top Clients (by orders)</p>
-            {topClients.length > 0 ? (
-              <ol className="space-y-2">
-                {topClients.map((c, i) => (
-                  <li key={c.name} className="flex items-center justify-between">
-                    <span className="text-white">{i + 1}. {c.name}</span>
-                    <span className="text-gray-400 text-sm">{c.count} orders</span>
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="text-gray-400">No client data in current view.</p>
-            )}
-          </div>
-
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-            <p className="text-gray-400 text-sm mb-2">Top Clients (by revenue)</p>
-            {topRevenueClients.length > 0 ? (
-              <ol className="space-y-2">
-                {topRevenueClients.map((c, i) => (
-                  <li key={c.name} className="flex items-center justify-between">
-                    <span className="text-white">{i + 1}. {c.name}</span>
-                    <span className="text-gray-400 text-sm">${c.total.toFixed(2)}</span>
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="text-gray-400">No revenue data in current view.</p>
-            )}
-          </div>
-
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-            <p className="text-gray-400 text-sm mb-2">Invoice Counts</p>
-            {invoiceCounts.length > 0 ? (
-              <ol className="space-y-2">
-                {invoiceCounts.map(c => (
-                  <li key={c.name} className="flex items-center justify-between">
-                    <span className="text-white">{c.name}</span>
-                    <span className="text-gray-400 text-sm">{c.count}</span>
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="text-gray-400">No invoices in current view.</p>
-            )}
-          </div>
-        </div>
-
-        {/* Orders per Client Chart */}
-        <div className="mb-10">
-          <h3 className="text-gray-200 font-semibold mb-3">Orders Per Client</h3>
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-            {ordersPerClientTop.length > 0 ? (
-              <div className="w-full overflow-x-auto">
-                <svg viewBox={`0 0 500 160`} width="100%" height="160" preserveAspectRatio="xMinYMid meet">
-                  {(() => {
-                    const paddingLeft = 120
-                    const chartWidth = 500 - paddingLeft - 20
-                    const max = Math.max(...ordersPerClientTop.map(d => d.count), 1)
-                    const barHeight = 22
-                    const gap = 12
-                    return ordersPerClientTop.map((d, i) => {
-                      const y = i * (barHeight + gap) + 10
-                      const barW = Math.round((d.count / max) * chartWidth)
-                      const fill = selectedClientId === d.clientId ? '#7c3aed' : '#4f46e5'
-                      const revenue = topRevenueClients.find(t => t.name === d.name)?.total || 0
-                      const tooltip = `${d.name}: ${d.count} orders${revenue ? ` — $${revenue.toFixed(2)}` : ''}`
-                      return (
-                        <g
-                          key={d.clientId}
-                          onClick={() => {
-                            setSelectedClientId(d.clientId === 'unassigned' ? 'all' : d.clientId)
-                            setSearchTerm('')
-                          }}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          <title>{tooltip}</title>
-                          <text x={10} y={y + 15} fill="#e5e7eb" fontSize={12}>{d.name}</text>
-                          <rect x={paddingLeft} y={y} width={barW} height={barHeight} rx={6} fill={fill} style={{ transition: 'width 320ms ease, fill 180ms ease' }} />
-                          <text x={paddingLeft + barW + 8} y={y + 15} fill="#9ca3af" fontSize={12}>{d.count}</text>
-
-                          {selectedClientId === d.clientId && selectedClientId !== 'all' && (
-                            <g
-                              onClick={(e: MouseEvent) => {
-                                e.stopPropagation()
-                                setSelectedClientId('all')
-                                setSearchTerm('')
-                              }}
-                              style={{ cursor: 'pointer' }}
-                            >
-                              <circle cx={paddingLeft + barW + 28} cy={y + barHeight / 2} r={9} fill="#ef4444" />
-                              <text x={paddingLeft + barW + 28} y={y + barHeight / 2 + 4} fill="#fff" fontSize={10} textAnchor="middle">×</text>
-                            </g>
-                          )}
-                        </g>
-                      )
-                    })
-                  })()}
-                </svg>
+        {/* Draggable Widget Layout */}
+        <DragDropContext onDragEnd={onLayoutDragEnd}>
+          <Droppable droppableId="dashboard-layout" direction="vertical">
+            {provided => (
+              <div
+                ref={provided.innerRef}
+                {...provided.droppableProps}
+                className="space-y-8"
+              >
+                {layout.map((widgetId, index) => {
+                  const WIDGETS: Record<string, { title: string; render: () => React.ReactNode }> = {
+                    stats: { title: 'Stats', render: renderStats },
+                    kanban: { title: 'Orders', render: renderKanban },
+                    analytics: { title: 'Analytics', render: renderAnalytics },
+                  }
+                  const widget = WIDGETS[widgetId]
+                  if (!widget) return null
+                  return (
+                    <DashboardWidget key={widgetId} id={widgetId} index={index} title={widget.title}>
+                      {widget.render()}
+                    </DashboardWidget>
+                  )
+                })}
+                {provided.placeholder}
               </div>
-            ) : (
-              <p className="text-gray-400">No orders to chart in current view.</p>
             )}
-          </div>
-        </div>
-
-        {/* Kanban Board */}
-        <DragDropContext onDragEnd={onDragEnd}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {COLUMNS.map(col => {
-              const colOrders = filteredOrders.filter(o => o.status === col.key)
-              return (
-                <div key={col.key} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
-                  {/* Column Header */}
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-white font-semibold">{col.label}</h2>
-                    <span className="bg-gray-800 text-gray-400 text-xs font-bold px-2 py-1 rounded-full">
-                      {colOrders.length}
-                    </span>
-                  </div>
-
-                  {/* Droppable Column */}
-                  <Droppable droppableId={col.key}>
-                    {(provided, snapshot) => (
-                      <div
-                        ref={provided.innerRef}
-                        {...provided.droppableProps}
-                        className={`space-y-3 min-h-24 rounded-xl transition ${
-                          snapshot.isDraggingOver ? 'bg-indigo-500/10 border border-indigo-500/30' : ''
-                        }`}
-                      >
-                        {colOrders.length === 0 && !snapshot.isDraggingOver && (
-                          <p className="text-gray-600 text-sm text-center py-6">No orders</p>
-                        )}
-
-                        {colOrders.map((order, index) => {
-                          const clientName = Array.isArray(order.clients)
-                            ? order.clients[0]?.name || ''
-                            : (order.clients && (order.clients as { name?: string }).name) || ''
-                          const clientIdLocal = order.client_id || ''
-
-                          return (
-                            <Draggable key={order.id} draggableId={order.id} index={index}>
-                              {(provided, snapshot) => (
-                                <div
-                                  onClick={() => router.push(`/dashboard/orders/${order.id}`)}
-                                  ref={provided.innerRef}
-                                  {...provided.draggableProps}
-                                  {...provided.dragHandleProps}
-                                  className={`bg-gray-800 border rounded-xl p-4 transition cursor-grab active:cursor-grabbing ${
-                                    snapshot.isDragging
-                                      ? 'border-indigo-500 shadow-lg shadow-indigo-500/20 rotate-1'
-                                      : 'border-gray-700 hover:border-indigo-500'
-                                  }`}
-                                >
-                                  <div className="flex items-start justify-between gap-2 mb-2">
-                                    <span className="text-white text-sm font-medium leading-snug">{order.title}</span>
-                                    <span className="text-lg shrink-0">{TYPE_EMOJI[order.type] || '📋'}</span>
-                                  </div>
-
-                                  <p className="text-gray-500 text-xs mb-2">{order.order_number}</p>
-
-                                  <div className="mb-2">
-                                    {clientName ? (
-                                      clientIdLocal ? (
-                                        <Link
-                                          href={`/dashboard/clients/${clientIdLocal}`}
-                                          onClick={e => e.stopPropagation()}
-                                          className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full hover:bg-indigo-500 hover:text-white transition"
-                                        >
-                                          {clientName}
-                                        </Link>
-                                      ) : (
-                                        <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full">{clientName}</span>
-                                      )
-                                    ) : (
-                                      <span className="text-xs text-gray-400">Unassigned</span>
-                                    )}
-                                  </div>
-
-                                  {order.due_date && (
-                                    <p className={`text-xs ${isOverdue(order.due_date) ? 'text-red-400' : 'text-gray-400'}`}>
-                                      Due {new Date(order.due_date).toLocaleDateString()}
-                                      {isOverdue(order.due_date) && ' ⚠️'}
-                                    </p>
-                                  )}
-                                </div>
-                              )}
-                            </Draggable>
-                          )
-                        })}
-                        {provided.placeholder}
-                      </div>
-                    )}
-                  </Droppable>
-                </div>
-              )
-            })}
-          </div>
+          </Droppable>
         </DragDropContext>
       </main>
 
