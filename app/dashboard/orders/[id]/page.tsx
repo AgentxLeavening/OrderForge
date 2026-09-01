@@ -1,0 +1,399 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { supabase } from '@/lib/supabase'
+import { useRouter, useParams } from 'next/navigation'
+import Link from 'next/link'
+import { generateInvoicePdf } from '@/lib/generateInvoicePdf'
+
+
+type Order = {
+  id: string
+  title: string
+  type: string
+  status: string
+  order_number: string
+  due_date: string | null
+  notes: string | null
+  created_at: string
+  client_id: string | null
+}
+
+type LineItem = {
+  id: string
+  description: string
+  quantity: number
+  unit_price: number
+}
+
+const TYPE_OPTIONS = [
+  { value: 'commission', label: '🎨 Commission / Craft' },
+  { value: 'print_job', label: '🖨️ 3D Print Job' },
+  { value: 'card_lot', label: '🃏 Card Lot' },
+  { value: 'wholesale', label: '📦 Wholesale' },
+  { value: 'other', label: '📋 Other' },
+]
+
+const STATUS_OPTIONS = [
+  { value: 'inquiry', label: 'Inquiry' },
+  { value: 'quoted', label: 'Quoted' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'complete', label: 'Complete' },
+]
+
+const STATUS_COLORS: Record<string, string> = {
+  inquiry: 'bg-gray-700 text-gray-300',
+  quoted: 'bg-yellow-500/20 text-yellow-400',
+  in_progress: 'bg-blue-500/20 text-blue-400',
+  complete: 'bg-green-500/20 text-green-400',
+}
+
+export default function OrderDetailPage() {
+  const router = useRouter()
+  const params = useParams()
+  const id = params.id as string
+
+  const [order, setOrder] = useState<Order | null>(null)
+  const [lineItems, setLineItems] = useState<LineItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  // Editable fields
+  const [title, setTitle] = useState('')
+  const [type, setType] = useState('')
+  const [status, setStatus] = useState('')
+  const [dueDate, setDueDate] = useState('')
+  const [notes, setNotes] = useState('')
+
+  // New line item
+  const [newDesc, setNewDesc] = useState('')
+  const [newQty, setNewQty] = useState('1')
+  const [newPrice, setNewPrice] = useState('')
+
+  useEffect(() => {
+    const fetchOrder = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { router.push('/login'); return }
+
+      const { data: orderData } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .single()
+
+      if (!orderData) { router.push('/dashboard'); return }
+
+      setOrder(orderData)
+      setTitle(orderData.title)
+      setType(orderData.type)
+      setStatus(orderData.status)
+      setDueDate(orderData.due_date || '')
+      setNotes(orderData.notes || '')
+
+      const { data: items } = await supabase
+        .from('order_items')
+        .select('*')
+        .eq('order_id', id)
+        .order('created_at', { ascending: true })
+
+      setLineItems(items || [])
+      setLoading(false)
+    }
+
+    fetchOrder()
+  }, [id, router])
+
+  const saveOrder = async () => {
+    setSaving(true)
+    await supabase
+      .from('orders')
+      .update({
+        title,
+        type,
+        status,
+        due_date: dueDate || null,
+        notes,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+
+    setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  const addLineItem = async () => {
+    if (!newDesc.trim() || !newPrice) return
+
+    const { data } = await supabase
+      .from('order_items')
+      .insert({
+        order_id: id,
+        description: newDesc,
+        quantity: parseFloat(newQty),
+        unit_price: parseFloat(newPrice),
+      })
+      .select()
+      .single()
+
+    if (data) {
+      setLineItems(prev => [...prev, data])
+      setNewDesc('')
+      setNewQty('1')
+      setNewPrice('')
+    }
+  }
+
+  const removeLineItem = async (itemId: string) => {
+    await supabase.from('order_items').delete().eq('id', itemId)
+    setLineItems(prev => prev.filter(i => i.id !== itemId))
+  }
+
+  const total = lineItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    )
+  }
+const handleGenerateInvoice = async () => {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || !order) return
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('name, business_name, default_tax_rate')
+    .eq('id', user.id)
+    .single()
+
+  const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`
+  const subtotal = lineItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
+  const taxRate = profile?.default_tax_rate || 0
+  const taxAmount = subtotal * (taxRate / 100)
+  const total = subtotal + taxAmount
+
+  // Save invoice to Supabase
+  await supabase.from('invoices').insert({
+    user_id: user.id,
+    order_id: id,
+    invoice_number: invoiceNumber,
+    status: 'draft',
+    subtotal,
+    tax_rate: taxRate,
+    tax_amount: taxAmount,
+    total,
+    balance_due: total,
+    due_date: dueDate || null,
+    notes,
+  })
+
+  // Generate PDF
+  const pdfBytes = await generateInvoicePdf({
+    invoiceNumber,
+    businessName: profile?.business_name || 'My Shop',
+    ownerName: profile?.name || '',
+    createdAt: new Date().toLocaleDateString(),
+    dueDate: dueDate ? new Date(dueDate).toLocaleDateString() : undefined,
+    lineItems,
+    notes: notes || undefined,
+    taxRate,
+  })
+
+  // Download it
+ const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${invoiceNumber}.pdf`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+  return (
+    <div className="min-h-screen bg-gray-950">
+      {/* Nav */}
+      <nav className="border-b border-gray-800 bg-gray-900 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link href="/dashboard" className="text-gray-500 hover:text-white transition text-sm">
+            ← Back
+          </Link>
+          <span className="text-gray-700">|</span>
+          <span className="text-indigo-400 font-bold">OrderForge</span>
+        </div>
+        <span className={`text-xs font-semibold px-3 py-1 rounded-full ${STATUS_COLORS[status]}`}>
+          {STATUS_OPTIONS.find(s => s.value === status)?.label}
+        </span>
+      </nav>
+
+      <main className="max-w-4xl mx-auto px-6 py-10">
+        {/* Order Header */}
+        <div className="flex items-start justify-between mb-8 gap-4">
+          <div className="flex-1">
+            <p className="text-gray-500 text-sm mb-1">{order?.order_number}</p>
+            <input
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              className="text-3xl font-bold text-white bg-transparent border-b border-transparent hover:border-gray-700 focus:border-indigo-500 focus:outline-none w-full pb-1 transition"
+            />
+          </div>
+          <button
+            onClick={saveOrder}
+            disabled={saving}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-lg transition disabled:opacity-50 shrink-0"
+          >
+            {saving ? 'Saving...' : saved ? '✓ Saved' : 'Save Changes'}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          {/* Order Details */}
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+            <h2 className="text-white font-semibold mb-4">Order Details</h2>
+
+            <div>
+              <label className="text-sm text-gray-400 mb-1 block">Type</label>
+              <select
+                value={type}
+                onChange={e => setType(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500"
+              >
+                {TYPE_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm text-gray-400 mb-1 block">Status</label>
+              <select
+                value={status}
+                onChange={e => setStatus(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500"
+              >
+                {STATUS_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm text-gray-400 mb-1 block">Due Date</label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={e => setDueDate(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <h2 className="text-white font-semibold mb-4">Notes</h2>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={6}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+              placeholder="Order notes, customer requests, reference details..."
+            />
+          </div>
+        </div>
+
+        {/* Line Items */}
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
+          <h2 className="text-white font-semibold mb-4">Line Items</h2>
+
+          {/* Header */}
+          {lineItems.length > 0 && (
+            <div className="grid grid-cols-12 gap-2 mb-2 px-1">
+              <p className="col-span-6 text-gray-500 text-xs uppercase tracking-wide">Description</p>
+              <p className="col-span-2 text-gray-500 text-xs uppercase tracking-wide text-center">Qty</p>
+              <p className="col-span-2 text-gray-500 text-xs uppercase tracking-wide text-right">Price</p>
+              <p className="col-span-2 text-gray-500 text-xs uppercase tracking-wide text-right">Total</p>
+            </div>
+          )}
+
+          {/* Items */}
+          <div className="space-y-2 mb-4">
+            {lineItems.length === 0 && (
+              <p className="text-gray-600 text-sm text-center py-4">No line items yet — add one below</p>
+            )}
+            {lineItems.map(item => (
+              <div key={item.id} className="grid grid-cols-12 gap-2 items-center bg-gray-800 rounded-lg px-4 py-3">
+                <p className="col-span-6 text-white text-sm">{item.description}</p>
+                <p className="col-span-2 text-gray-400 text-sm text-center">{item.quantity}</p>
+                <p className="col-span-2 text-gray-400 text-sm text-right">${item.unit_price.toFixed(2)}</p>
+                <div className="col-span-2 flex items-center justify-end gap-2">
+                  <p className="text-white text-sm font-medium">${(item.quantity * item.unit_price).toFixed(2)}</p>
+                  <button
+                    onClick={() => removeLineItem(item.id)}
+                    className="text-gray-600 hover:text-red-400 transition text-lg leading-none"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Add Line Item */}
+          <div className="grid grid-cols-12 gap-2 items-center border-t border-gray-800 pt-4">
+            <input
+              value={newDesc}
+              onChange={e => setNewDesc(e.target.value)}
+              placeholder="Description"
+              className="col-span-6 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500"
+            />
+            <input
+              value={newQty}
+              onChange={e => setNewQty(e.target.value)}
+              placeholder="Qty"
+              type="number"
+              min="1"
+              className="col-span-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500 text-center"
+            />
+            <input
+              value={newPrice}
+              onChange={e => setNewPrice(e.target.value)}
+              placeholder="Price"
+              type="number"
+              min="0"
+              step="0.01"
+              className="col-span-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500 text-right"
+            />
+            <button
+              onClick={addLineItem}
+              className="col-span-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition text-sm"
+            >
+              + Add
+            </button>
+          </div>
+
+          {/* Total */}
+          {lineItems.length > 0 && (
+            <div className="flex justify-end mt-4 pt-4 border-t border-gray-800">
+              <div className="text-right">
+                <p className="text-gray-400 text-sm">Order Total</p>
+                <p className="text-white text-2xl font-bold">${total.toFixed(2)}</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+              {/* Invoice Button */}
+        <div className="flex justify-end">
+          <button
+            onClick={handleGenerateInvoice}
+            className="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-3 rounded-lg transition"
+          >
+            Generate Invoice →
+          </button>
+        </div>
+      </main>
+    </div>
+  )
+}
