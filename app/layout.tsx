@@ -34,6 +34,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
                 <Link href="/dashboard/clients" className="text-gray-400 hover:text-white text-sm">Clients</Link>
                 <Link href="/dashboard/products" className="text-gray-400 hover:text-white text-sm">Products</Link>
                 <Link href="/dashboard/inventory" className="text-gray-400 hover:text-white text-sm">Inventory</Link>
+                <Link href="/dashboard/settings" className="text-gray-400 hover:text-white text-sm">Settings</Link>
               </nav>
             </div>
           </div>

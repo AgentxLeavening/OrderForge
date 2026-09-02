@@ -56,6 +56,8 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
   const [markup, setMarkup] = useState(1.5)
+  const [hourlyRate, setHourlyRate] = useState(0)
+  const [feePct, setFeePct] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -94,7 +96,31 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
     }
 
     fetchProducts()
+
+    const fetchProfile = async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('hourly_rate, default_markup, default_fee_pct')
+        .eq('id', userId)
+        .single()
+      if (data) {
+        if (data.hourly_rate != null) setHourlyRate(Number(data.hourly_rate))
+        if (data.default_markup != null) setMarkup(Number(data.default_markup))
+        if (data.default_fee_pct != null) setFeePct(Number(data.default_fee_pct))
+      }
+    }
+
+    fetchProfile()
   }, [userId])
+
+  // Suggested price = (materials + labor) × markup, grossed up to cover fees.
+  const materialCost = (selectedProduct?.items || []).reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0)
+  const laborCost = (Number(selectedProduct?.est_time) || 0) * (Number(hourlyRate) || 0)
+  const costSubtotal = materialCost + laborCost
+  const afterMarkup = costSubtotal * markup
+  const feeFrac = Math.min(Math.max(Number(feePct) || 0, 0), 99) / 100
+  const computedPrice = Number((feeFrac > 0 ? afterMarkup / (1 - feeFrac) : afterMarkup).toFixed(2))
+  const finalSuggestedPrice = selectedProduct?.suggested_price ? Number(selectedProduct.suggested_price) : computedPrice
 
   const handleCreate = async () => {
     if (!title.trim()) {
@@ -104,11 +130,6 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
 
     setLoading(true)
     setError('')
-
-    // compute material cost and chosen suggested price (markup or template)
-    const materialCost = (selectedProduct?.items || []).reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0)
-    const computedMarkupPrice = Number((materialCost * markup).toFixed(2))
-    const finalSuggestedPrice = selectedProduct?.suggested_price ? Number(selectedProduct.suggested_price) : computedMarkupPrice
 
     const orderNumber = `ORD-${Date.now().toString().slice(-6)}`
 
@@ -248,22 +269,43 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
             {selectedProduct && (
               <div className="mb-3">
                 <ProductCard product={selectedProduct} compact />
-                <div className="mt-2 bg-gray-800 border border-gray-700 rounded p-3">
-                <p className="text-gray-300 text-sm mb-2">Estimated material cost: <strong className="text-white">${(selectedProduct.items || []).reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0).toFixed(2)}</strong></p>
-                <p className="text-gray-400 text-xs mb-2">Pricing presets:</p>
-                <div className="flex items-center gap-2 mb-2">
-                  {[1.2, 1.5, 2].map(p => (
-                    <button key={p} onClick={() => setMarkup(p)} className={`px-3 py-1 rounded ${markup === p ? 'bg-indigo-600' : 'bg-gray-700'}`}>
-                      {Math.round((p - 1) * 100)}% markup
-                    </button>
-                  ))}
-                  <button onClick={() => setMarkup(1)} className={`px-3 py-1 rounded ${markup === 1 ? 'bg-indigo-600' : 'bg-gray-700'}`}>No markup</button>
-                </div>
+                <div className="mt-2 bg-gray-800 border border-gray-700 rounded p-3 space-y-1.5">
+                  <div className="flex justify-between text-sm text-gray-300"><span>Materials</span><span>${materialCost.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-sm text-gray-300">
+                    <span>Labor {Number(selectedProduct.est_time) ? `(${Number(selectedProduct.est_time)}h × $${hourlyRate}/h)` : ''}</span>
+                    <span>${laborCost.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-gray-400 border-t border-gray-700 pt-1.5"><span>Cost subtotal</span><span>${costSubtotal.toFixed(2)}</span></div>
 
-                <p className="text-gray-300 text-sm">Suggested price (markup): <strong className="text-white">${((selectedProduct.items || []).reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0) * markup).toFixed(2)}</strong></p>
-                {selectedProduct.suggested_price && (
-                  <p className="text-gray-400 text-xs mt-1">Template suggested price: <strong className="text-white">${Number(selectedProduct.suggested_price).toFixed(2)}</strong></p>
-                )}
+                  <p className="text-gray-400 text-xs pt-1">Markup:</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[1.2, 1.5, 2].map(p => (
+                      <button key={p} onClick={() => setMarkup(p)} className={`px-3 py-1 rounded text-sm ${markup === p ? 'bg-indigo-600' : 'bg-gray-700'}`}>
+                        {Math.round((p - 1) * 100)}%
+                      </button>
+                    ))}
+                    <button onClick={() => setMarkup(1)} className={`px-3 py-1 rounded text-sm ${markup === 1 ? 'bg-indigo-600' : 'bg-gray-700'}`}>None</button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <label className="text-xs text-gray-400">Hourly rate ($/h)
+                      <input value={hourlyRate} onChange={e => setHourlyRate(Number(e.target.value))} type="number" step="0.01" className="mt-1 w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white text-sm focus:outline-none focus:border-indigo-500" />
+                    </label>
+                    <label className="text-xs text-gray-400">Marketplace fee (%)
+                      <input value={feePct} onChange={e => setFeePct(Number(e.target.value))} type="number" step="0.1" className="mt-1 w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white text-sm focus:outline-none focus:border-indigo-500" />
+                    </label>
+                  </div>
+
+                  <div className="flex justify-between text-sm border-t border-gray-700 pt-2 mt-1">
+                    <span className="text-gray-300">Suggested price</span>
+                    <strong className="text-white">${computedPrice.toFixed(2)}</strong>
+                  </div>
+                  {feeFrac > 0 && (
+                    <p className="text-gray-500 text-xs">${afterMarkup.toFixed(2)} + {feePct}% fee cover</p>
+                  )}
+                  {selectedProduct.suggested_price && (
+                    <p className="text-gray-400 text-xs pt-1">Template override in use: <strong className="text-white">${Number(selectedProduct.suggested_price).toFixed(2)}</strong></p>
+                  )}
                 </div>
               </div>
             )}
