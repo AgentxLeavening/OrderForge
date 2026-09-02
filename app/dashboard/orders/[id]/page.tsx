@@ -56,6 +56,9 @@ const STATUS_COLORS: Record<string, string> = {
   complete: 'bg-green-500/20 text-green-400',
 }
 
+const channelLabel = (value: string | null | undefined) =>
+  CHANNEL_OPTIONS.find(o => o.value === (value || ''))?.label ?? (value || '')
+
 export default function OrderDetailPage() {
   const router = useRouter()
   const params = useParams()
@@ -231,6 +234,7 @@ const handleGenerateInvoice = async () => {
     ownerName: profile?.name || '',
     clientName: clientData?.name || buyerName || undefined,
     clientEmail: clientData?.email || undefined,
+    salesChannel: salesChannel ? channelLabel(salesChannel) : undefined,
     createdAt: new Date().toLocaleDateString(),
     dueDate: dueDate ? new Date(dueDate).toLocaleDateString() : undefined,
     lineItems,
@@ -259,6 +263,16 @@ const handleGenerateInvoice = async () => {
               onChange={e => setTitle(e.target.value)}
               className="text-3xl font-bold text-white bg-transparent border-b border-transparent hover:border-gray-700 focus:border-indigo-500 focus:outline-none w-full pb-1 transition"
             />
+            {(buyerName || salesChannel) && (
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                {buyerName && (
+                  <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full">🛒 {buyerName}</span>
+                )}
+                {salesChannel && (
+                  <span className="text-xs bg-indigo-500/15 text-indigo-300 px-2 py-1 rounded-full">{channelLabel(salesChannel)}</span>
+                )}
+              </div>
+            )}
           </div>
           <button
             onClick={saveOrder}

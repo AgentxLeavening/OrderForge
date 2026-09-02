@@ -12,6 +12,7 @@ type InvoiceData = {
   ownerName: string
   clientName?: string
   clientEmail?: string
+  salesChannel?: string
   createdAt: string
   dueDate?: string
   lineItems: LineItem[]
@@ -74,6 +75,10 @@ export async function generateInvoicePdf(data: InvoiceData): Promise<Uint8Array>
   billY -= 16
   if (data.clientEmail) {
     page.drawText(data.clientEmail, { x: 260, y: billY, font: fontRegular, size: 11, color: GRAY })
+    billY -= 16
+  }
+  if (data.salesChannel) {
+    page.drawText(`via ${data.salesChannel}`, { x: 260, y: billY, font: fontRegular, size: 11, color: GRAY })
   }
 
   // Dates
