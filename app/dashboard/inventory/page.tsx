@@ -184,13 +184,34 @@ function InventoryForm({ item, onSave, onCancel }: { item: Partial<Item>, onSave
   const [quantity, setQuantity] = useState(String(item?.quantity ?? 0))
   const [unitCost, setUnitCost] = useState(String(item?.unit_cost ?? 0))
 
+  const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500'
+  const labelClass = 'text-sm text-gray-400 mb-1 block'
+
   return (
     <div>
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white" />
-        <input value={sku} onChange={e => setSku(e.target.value)} placeholder="SKU" className="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white" />
-        <input value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="Quantity" type="number" className="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white" />
-        <input value={unitCost} onChange={e => setUnitCost(e.target.value)} placeholder="Unit cost" type="number" step="0.01" className="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white" />
+      <h2 className="text-white font-semibold mb-4">{item?.id ? 'Edit item' : 'New item'}</h2>
+
+      <div className="space-y-4 mb-6">
+        <div>
+          <label className={labelClass}>Name</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Black PLA filament" className={inputClass} />
+        </div>
+
+        <div>
+          <label className={labelClass}>SKU <span className="text-gray-600">(optional)</span></label>
+          <input value={sku} onChange={e => setSku(e.target.value)} placeholder="Optional stock code" className={inputClass} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className={labelClass}>Quantity on hand</label>
+            <input value={quantity} onChange={e => setQuantity(e.target.value)} type="number" className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass}>Unit cost ($)</label>
+            <input value={unitCost} onChange={e => setUnitCost(e.target.value)} type="number" step="0.01" className={inputClass} />
+          </div>
+        </div>
       </div>
 
       <div className="flex gap-3">

@@ -78,28 +78,58 @@ export default function ProductEditor({ userId, product, onSaved, onCancel }: Pr
     setSaving(false)
   }
 
+  const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500'
+  const cellClass = 'w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500'
+  const labelClass = 'text-sm text-gray-400 mb-1 block'
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded p-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Product name" className="col-span-2 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white" />
-        <input value={suggestedPrice} onChange={e => setSuggestedPrice(e.target.value)} placeholder="Suggested price" className="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white" />
+      <h2 className="text-white font-semibold mb-4">{product?.id ? 'Edit template' : 'New template'}</h2>
+
+      <div className="space-y-4 mb-5">
+        <div>
+          <label className={labelClass}>Product name</label>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Resin Trinket Tray" className={inputClass} />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className={labelClass}>Suggested price ($) <span className="text-gray-600">(optional)</span></label>
+            <input value={suggestedPrice} onChange={e => setSuggestedPrice(e.target.value)} type="number" step="0.01" placeholder="Auto from markup if blank" className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass}>Estimated time (hours) <span className="text-gray-600">(optional)</span></label>
+            <input value={estTime} onChange={e => setEstTime(e.target.value)} type="number" step="0.25" placeholder="e.g. 1.5" className={inputClass} />
+          </div>
+        </div>
       </div>
 
-      <div className="mb-3">
+      <div className="mb-5">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-white font-semibold">Bill of Materials</h3>
-          <button onClick={addItem} className="text-sm bg-indigo-600 px-2 py-1 rounded">Add item</button>
+          <button onClick={addItem} className="text-sm bg-indigo-600 hover:bg-indigo-700 px-2 py-1 rounded">+ Add item</button>
         </div>
+
+        {items.length > 0 && (
+          <div className="grid grid-cols-12 gap-2 px-1 mb-1 text-xs text-gray-500 uppercase tracking-wide">
+            <div className="col-span-6">Item</div>
+            <div className="col-span-2">Qty</div>
+            <div className="col-span-3">Unit cost ($)</div>
+            <div className="col-span-1" />
+          </div>
+        )}
 
         <div className="space-y-2">
           {items.map((it, idx) => (
-            <div key={idx} className="grid grid-cols-5 gap-2 items-center">
-              <input className="col-span-2 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-white" value={it.name} onChange={e => updateItem(idx, 'name', e.target.value)} placeholder="Item name" />
-              <input className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-white" value={it.quantity} onChange={e => updateItem(idx, 'quantity', Number(e.target.value))} type="number" />
-              <input className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-white" value={it.unit_cost} onChange={e => updateItem(idx, 'unit_cost', Number(e.target.value))} type="number" />
-              <button className="text-red-500" onClick={() => removeItem(idx)}>Remove</button>
+            <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+              <input className={`col-span-6 ${cellClass}`} value={it.name} onChange={e => updateItem(idx, 'name', e.target.value)} placeholder="Item name" />
+              <input className={`col-span-2 ${cellClass}`} value={it.quantity} onChange={e => updateItem(idx, 'quantity', Number(e.target.value))} type="number" />
+              <input className={`col-span-3 ${cellClass}`} value={it.unit_cost} onChange={e => updateItem(idx, 'unit_cost', Number(e.target.value))} type="number" step="0.01" />
+              <button className="col-span-1 text-red-500 hover:text-red-400 text-lg leading-none" onClick={() => removeItem(idx)} title="Remove">✕</button>
             </div>
           ))}
+          {items.length === 0 && (
+            <p className="text-gray-500 text-sm">No materials yet — add items to build the bill of materials.</p>
+          )}
         </div>
       </div>
 
