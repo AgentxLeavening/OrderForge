@@ -33,6 +33,10 @@ type Order = {
   client_id: string | null
   sales_channel: string | null
   buyer_name?: string | null
+  suggested_price?: number | null
+  material_cost?: number | null
+  labor_cost?: number | null
+  fee_pct?: number | null
   clients?: {
     name: string
     id?: string
@@ -65,7 +69,6 @@ export default function DashboardPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [clients, setClients] = useState<ClientOption[]>([])
   const [topRevenueClients, setTopRevenueClients] = useState<{ name: string; total: number }[]>([])
-  const [channelStats, setChannelStats] = useState<{ name: string; total: number; count: number }[]>([])
   const [invoiceCounts, setInvoiceCounts] = useState<{ name: string; count: number }[]>([])
   const [selectedClientId, setSelectedClientId] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
@@ -113,21 +116,6 @@ export default function DashboardPage() {
         revenueByClient[clientName] = (revenueByClient[clientName] || 0) + amt
       })
     }
-
-    // Aggregate orders + revenue by sales channel — unlike the per-client
-    // breakdowns, this counts one-off / no-client sales too.
-    const channelAgg: Record<string, { total: number; count: number }> = {}
-    ordersData.forEach(o => {
-      const label = channelLabel(o.sales_channel)
-      if (!channelAgg[label]) channelAgg[label] = { total: 0, count: 0 }
-      channelAgg[label].total += orderTotals[o.id] || 0
-      channelAgg[label].count += 1
-    })
-    setChannelStats(
-      Object.entries(channelAgg)
-        .map(([name, v]) => ({ name, total: v.total, count: v.count }))
-        .sort((a, b) => b.total - a.total || b.count - a.count)
-    )
 
     // Use invoices table to compute invoice counts per client (one invoice may exist per order)
     const { data: invoices } = await supabase
@@ -288,6 +276,52 @@ export default function DashboardPage() {
       .slice(0, 5)
       .map(([clientId, v]) => ({ clientId, name: v.name, count: v.count }))
   })()
+  // Profit / margin economics from the persisted pricing breakdown. This mirrors
+  // the order-detail "Pricing & Margin" definition (revenue = suggested price,
+  // cost = materials + labor, fee applies to the price) rather than the
+  // order_items line totals, whose unit_price is the cost basis for
+  // template-created orders and so would understate revenue.
+  const pricedOrders = filteredOrders
+    .map(o => {
+      if (o.suggested_price == null && o.material_cost == null) return null
+      const price = Number(o.suggested_price) || 0
+      const cost = (Number(o.material_cost) || 0) + (Number(o.labor_cost) || 0)
+      const feeAmt = price * (Number(o.fee_pct) || 0) / 100
+      return { order: o, price, cost, feeAmt, profit: price - cost - feeAmt }
+    })
+    .filter((e): e is NonNullable<typeof e> => e !== null)
+
+  const totalRevenue = pricedOrders.reduce((s, e) => s + e.price, 0)
+  const totalProfit = pricedOrders.reduce((s, e) => s + e.profit, 0)
+  const avgMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0
+
+  const topProfitClients = (() => {
+    const map: Record<string, { name: string; profit: number }> = {}
+    pricedOrders.forEach(({ order, profit }) => {
+      const clientId = order.client_id || 'unassigned'
+      const name = Array.isArray(order.clients)
+        ? order.clients[0]?.name || 'Unassigned'
+        : (order.clients && (order.clients as { name?: string }).name) || 'Unassigned'
+      if (!map[clientId]) map[clientId] = { name, profit: 0 }
+      map[clientId].profit += profit
+    })
+    return Object.values(map).sort((a, b) => b.profit - a.profit).slice(0, 3)
+  })()
+
+  const channelProfit = (() => {
+    const map: Record<string, { revenue: number; profit: number; count: number }> = {}
+    pricedOrders.forEach(({ order, price, profit }) => {
+      const label = channelLabel(order.sales_channel)
+      if (!map[label]) map[label] = { revenue: 0, profit: 0, count: 0 }
+      map[label].revenue += price
+      map[label].profit += profit
+      map[label].count += 1
+    })
+    return Object.entries(map)
+      .map(([name, v]) => ({ name, ...v }))
+      .sort((a, b) => b.profit - a.profit || b.count - a.count)
+  })()
+
   const isOverdue = (due: string | null) => due && new Date(due) < new Date()
 
   // Widget render helpers
@@ -308,7 +342,30 @@ export default function DashboardPage() {
 
   const renderAnalytics = () => (
     <div className="grid grid-cols-1 gap-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Money summary — based on the persisted pricing breakdown (priced orders only) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {[
+          { label: 'Est. Revenue', value: `$${totalRevenue.toFixed(2)}`, tone: 'text-white' },
+          {
+            label: 'Est. Profit',
+            value: `$${totalProfit.toFixed(2)}`,
+            tone: totalProfit >= 0 ? 'text-green-400' : 'text-red-400',
+          },
+          { label: 'Avg. Margin', value: `${avgMargin.toFixed(0)}%`, tone: 'text-white' },
+        ].map(stat => (
+          <div key={stat.label} className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <p className="text-gray-400 text-sm mb-1">{stat.label}</p>
+            <p className={`text-2xl font-bold break-words ${stat.tone}`}>{stat.value}</p>
+          </div>
+        ))}
+      </div>
+      {pricedOrders.length === 0 && (
+        <p className="text-gray-500 text-xs -mt-2">
+          Profit figures cover orders with a saved price breakdown. Create orders from a product template to populate them.
+        </p>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
           <p className="text-gray-400 text-sm mb-2">Top Clients (by orders)</p>
           {topClients.length > 0 ? (
@@ -342,6 +399,22 @@ export default function DashboardPage() {
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+          <p className="text-gray-400 text-sm mb-2">Top Clients (by profit)</p>
+          {topProfitClients.length > 0 ? (
+            <ol className="space-y-2">
+              {topProfitClients.map((c, i) => (
+                <li key={c.name} className="flex items-center justify-between">
+                  <span className="text-white">{i + 1}. {c.name}</span>
+                  <span className={`text-sm ${c.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>${c.profit.toFixed(2)}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="text-gray-400">No profit data in current view.</p>
+          )}
+        </div>
+
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
           <p className="text-gray-400 text-sm mb-2">Invoice Counts</p>
           {invoiceCounts.length > 0 ? (
             <ol className="space-y-2">
@@ -361,17 +434,20 @@ export default function DashboardPage() {
       <div>
         <h3 className="text-gray-200 font-semibold mb-3">Sales by Channel</h3>
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-          {channelStats.length > 0 ? (
+          {channelProfit.length > 0 ? (
             <ol className="space-y-2">
-              {channelStats.map(c => (
-                <li key={c.name} className="flex items-center justify-between">
+              {channelProfit.map(c => (
+                <li key={c.name} className="flex items-center justify-between gap-4">
                   <span className="text-white">{c.name}</span>
-                  <span className="text-gray-400 text-sm">{c.count} {c.count === 1 ? 'order' : 'orders'} · ${c.total.toFixed(2)}</span>
+                  <span className="text-gray-400 text-sm text-right">
+                    {c.count} {c.count === 1 ? 'order' : 'orders'} · ${c.revenue.toFixed(2)} rev ·{' '}
+                    <span className={c.profit >= 0 ? 'text-green-400' : 'text-red-400'}>${c.profit.toFixed(2)} profit</span>
+                  </span>
                 </li>
               ))}
             </ol>
           ) : (
-            <p className="text-gray-400">No orders yet.</p>
+            <p className="text-gray-400">No priced orders in current view.</p>
           )}
         </div>
       </div>
