@@ -31,3 +31,14 @@ export const defaultUnitForCategory = (value: string | null | undefined) =>
 
 // Short unit for inline display next to a quantity, e.g. "1000 g", "12 each".
 export const unitShort = (value: string | null | undefined) => value || 'each'
+
+// An item is "low" once its quantity on hand drops to or below its reorder
+// threshold. A null/undefined threshold means the user hasn't opted in, so it
+// never alerts.
+export const isLowStock = (item: {
+  quantity?: number | null
+  reorder_threshold?: number | null
+}) => {
+  if (item.reorder_threshold == null) return false
+  return (Number(item.quantity) || 0) <= Number(item.reorder_threshold)
+}

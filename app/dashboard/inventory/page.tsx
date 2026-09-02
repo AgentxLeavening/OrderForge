@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { INVENTORY_CATEGORIES, INVENTORY_UNITS, categoryLabel, defaultUnitForCategory, unitShort } from '@/lib/inventory'
+import { INVENTORY_CATEGORIES, INVENTORY_UNITS, categoryLabel, defaultUnitForCategory, unitShort, isLowStock } from '@/lib/inventory'
 
 type Item = {
   id: string
@@ -12,6 +12,7 @@ type Item = {
   unit?: string
   quantity: number
   unit_cost: number
+  reorder_threshold?: number | null
 }
 
 export default function InventoryPage() {
@@ -163,7 +164,13 @@ export default function InventoryPage() {
                     <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">{categoryLabel(it.category).split(' ')[0]}</span>
                   </div>
                   <div className="col-span-2 text-gray-400">{it.sku || '—'}</div>
-                  <div className="col-span-2 text-center text-white">{it.quantity} <span className="text-gray-500 text-xs">{unitShort(it.unit)}</span></div>
+                  <div className="col-span-2 text-center">
+                    <span className={isLowStock(it) ? 'text-amber-400 font-medium' : 'text-white'}>{it.quantity}</span>
+                    {' '}<span className="text-gray-500 text-xs">{unitShort(it.unit)}</span>
+                    {isLowStock(it) && (
+                      <span className="ml-1.5 text-[10px] uppercase tracking-wide bg-amber-500/15 text-amber-400 px-1.5 py-0.5 rounded-full">Low</span>
+                    )}
+                  </div>
                   <div className="col-span-1 text-right text-gray-400">${Number(it.unit_cost || 0).toFixed(2)}</div>
                   <div className="col-span-1 flex items-center justify-end gap-2">
                     <button onClick={() => setEditing(it)} className="text-gray-400 hover:text-white">Edit</button>
@@ -192,6 +199,7 @@ function InventoryForm({ item, onSave, onCancel }: { item: Partial<Item>, onSave
   const [unit, setUnit] = useState(item?.unit || defaultUnitForCategory(item?.category || 'material'))
   const [quantity, setQuantity] = useState(String(item?.quantity ?? 0))
   const [unitCost, setUnitCost] = useState(String(item?.unit_cost ?? 0))
+  const [reorderThreshold, setReorderThreshold] = useState(item?.reorder_threshold == null ? '' : String(item.reorder_threshold))
 
   const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500'
   const labelClass = 'text-sm text-gray-400 mb-1 block'
@@ -248,10 +256,16 @@ function InventoryForm({ item, onSave, onCancel }: { item: Partial<Item>, onSave
             <input value={unitCost} onChange={e => setUnitCost(e.target.value)} type="number" step="0.01" className={inputClass} />
           </div>
         </div>
+
+        <div>
+          <label className={labelClass}>Reorder threshold ({u}) <span className="text-gray-600">(optional)</span></label>
+          <input value={reorderThreshold} onChange={e => setReorderThreshold(e.target.value)} type="number" placeholder="Leave blank for no alert" className={inputClass} />
+          <p className="text-gray-600 text-xs mt-1">Warn on the dashboard when on-hand quantity drops to or below this.</p>
+        </div>
       </div>
 
       <div className="flex gap-3">
-        <button onClick={() => onSave({ id: item.id, name, sku, category, unit, quantity: Number(quantity || 0), unit_cost: Number(unitCost || 0) })} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded">Save</button>
+        <button onClick={() => onSave({ id: item.id, name, sku, category, unit, quantity: Number(quantity || 0), unit_cost: Number(unitCost || 0), reorder_threshold: reorderThreshold.trim() === '' ? null : Number(reorderThreshold) })} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded">Save</button>
         <button onClick={onCancel} className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded">Cancel</button>
       </div>
     </div>
