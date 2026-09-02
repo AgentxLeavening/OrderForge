@@ -59,6 +59,7 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
   const [selectedInventoryId, setSelectedInventoryId] = useState('')
   const [directQty, setDirectQty] = useState(1)
   const [packHours, setPackHours] = useState(0)
+  const [productQty, setProductQty] = useState(1)
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
   const [markup, setMarkup] = useState(1.5)
@@ -152,13 +153,21 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
 
   // Suggested price = (materials + labor) × markup, grossed up to cover fees.
   const hasLiveCost = (selectedProduct?.items || []).some(it => it.inventory_item_id)
-  const materialCost = (selectedProduct?.items || []).reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0)
-  const laborCost = (Number(selectedProduct?.est_time) || 0) * (Number(hourlyRate) || 0)
+  // A product template is priced per unit, so multiply by the order quantity.
+  // The finished-good path already bakes its "quantity to sell" into the
+  // synthetic BOM line and its packing hours, so it stays at 1 here.
+  const isFinishedGood = !!selectedInventoryId
+  const unitMultiplier = isFinishedGood ? 1 : (Number(productQty) || 1)
+  const materialCost = unitMultiplier * (selectedProduct?.items || []).reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0)
+  const laborCost = unitMultiplier * (Number(selectedProduct?.est_time) || 0) * (Number(hourlyRate) || 0)
   const costSubtotal = materialCost + laborCost
   const afterMarkup = costSubtotal * markup
   const feeFrac = Math.min(Math.max(Number(feePct) || 0, 0), 99) / 100
   const computedPrice = Number((feeFrac > 0 ? afterMarkup / (1 - feeFrac) : afterMarkup).toFixed(2))
-  const finalSuggestedPrice = selectedProduct?.suggested_price ? Number(selectedProduct.suggested_price) : computedPrice
+  // A template override price is per unit, so scale it by the order quantity too.
+  const finalSuggestedPrice = selectedProduct?.suggested_price
+    ? Number(selectedProduct.suggested_price) * unitMultiplier
+    : computedPrice
 
   const handleCreate = async () => {
     if (!title.trim()) {
@@ -195,27 +204,30 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
       return
     }
 
-    // insert order_items if template selected
+    // Record the sale as a single billing line at the suggested price, using the
+    // same `description` column the order-detail line items use. The BOM is
+    // internal cost detail (persisted as material_cost/labor_cost on the order);
+    // billing each BOM line at its unit_cost would charge the customer our cost
+    // rather than the sale price. Inventory is still deducted per BOM item below.
     if (selectedProduct && selectedProduct.items && selectedProduct.items.length > 0) {
       try {
         const orderId = (createdOrder as any)?.id
         if (orderId) {
-          const itemsToInsert = selectedProduct.items.map(it => ({
+          const billQty = isFinishedGood ? (Number(directQty) || 1) : (Number(productQty) || 1)
+          const { error: itemsErr } = await supabase.from('order_items').insert({
             order_id: orderId,
-            name: it.name,
-            quantity: it.quantity,
-            unit_price: it.unit_cost,
-          }))
-
-          const { error: itemsErr } = await supabase.from('order_items').insert(itemsToInsert)
-          if (itemsErr) console.warn('Failed inserting order_items from template', itemsErr)
+            description: selectedProduct.name || title,
+            quantity: billQty,
+            unit_price: Number(((finalSuggestedPrice || 0) / billQty).toFixed(2)),
+          })
+          if (itemsErr) console.warn('Failed inserting order line item', itemsErr)
           // Attempt to deduct inventory for each BOM item (best-effort).
           // The decrement + audit-log happen atomically inside the
           // deduct_inventory_for_order DB function (row-locked) so concurrent
           // orders can't race and lose updates. See migration 007.
           try {
             for (const it of selectedProduct.items) {
-              const needed = Number(it.quantity) || 0
+              const needed = (Number(it.quantity) || 0) * unitMultiplier
               if (!needed) continue
 
               // Prefer the directly-linked inventory item; fall back to SKU, then name.
@@ -286,6 +298,7 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
                 const pid = e.target.value
                 setSelectedProductId(pid)
                 setSelectedInventoryId('')
+                setProductQty(1)
                 if (!pid) {
                   setSelectedProduct(null)
                   return
@@ -353,6 +366,17 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
             {selectedProduct && (
               <div className="mb-3">
                 <ProductCard product={selectedProduct} compact />
+                {selectedProductId && (
+                  <label className="text-xs text-gray-400 block mt-2">Quantity
+                    <input
+                      value={productQty}
+                      onChange={e => setProductQty(Number(e.target.value))}
+                      type="number"
+                      min="1"
+                      className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500"
+                    />
+                  </label>
+                )}
                 <div className="mt-2 bg-gray-800 border border-gray-700 rounded p-3 space-y-1.5">
                   <div className="flex justify-between text-sm text-gray-300"><span>Materials{hasLiveCost ? ' *' : ''}</span><span>${materialCost.toFixed(2)}</span></div>
                   <div className="flex justify-between text-sm text-gray-300">
