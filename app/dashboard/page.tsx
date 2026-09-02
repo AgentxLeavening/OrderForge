@@ -238,6 +238,8 @@ export default function DashboardPage() {
       order.title,
       order.order_number,
       clientName,
+      order.buyer_name || '',
+      order.sales_channel ? channelLabel(order.sales_channel) : '',
       ...(clientName ? clientName.split(/\s+/) : []),
     ]
 
@@ -489,7 +491,7 @@ export default function DashboardPage() {
 
                               <p className="text-gray-500 text-xs mb-2">{order.order_number}</p>
 
-                              <div className="mb-2">
+                              <div className="flex flex-wrap items-center gap-1.5 mb-2">
                                 {clientName ? (
                                   clientIdLocal ? (
                                     <Link
@@ -502,8 +504,13 @@ export default function DashboardPage() {
                                   ) : (
                                     <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full">{clientName}</span>
                                   )
+                                ) : order.buyer_name ? (
+                                  <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full">🛒 {order.buyer_name}</span>
                                 ) : (
                                   <span className="text-xs text-gray-400">Unassigned</span>
+                                )}
+                                {order.sales_channel && (
+                                  <span className="text-xs bg-indigo-500/15 text-indigo-300 px-2 py-0.5 rounded-full">{channelLabel(order.sales_channel)}</span>
                                 )}
                               </div>
 
