@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { unitShort } from '@/lib/inventory'
 
 type Props = {
   userId?: string | null
@@ -10,16 +11,62 @@ type Props = {
   onCancel?: () => void
 }
 
+type InventoryOption = { id: string; name: string; sku?: string | null; unit?: string | null; unit_cost?: number | null }
+
 export default function ProductEditor({ userId, product, onSaved, onCancel }: Props) {
   const [name, setName] = useState(product?.name || '')
   const [suggestedPrice, setSuggestedPrice] = useState(product?.suggested_price ?? '')
   const [estTime, setEstTime] = useState(product?.est_time ?? '')
   const [items, setItems] = useState<any[]>(product?.items || [])
+  const [inventory, setInventory] = useState<InventoryOption[]>([])
   const [saving, setSaving] = useState(false)
 
-  const addItem = () => setItems(prev => [...prev, { name: '', quantity: 1, unit_cost: 0 }])
+  // Load the user's inventory (for the picker) and, when editing, this
+  // template's existing BOM lines (ProductsPage doesn't fetch them).
+  useEffect(() => {
+    const load = async () => {
+      const { data: inv } = await supabase
+        .from('inventory_items')
+        .select('id, name, sku, unit, unit_cost')
+        .order('name', { ascending: true })
+      setInventory((inv || []) as InventoryOption[])
+
+      if (product?.id && !product?.items) {
+        const { data: rows } = await supabase
+          .from('product_items')
+          .select('id, name, sku, quantity, unit_cost, inventory_item_id')
+          .eq('product_id', product.id)
+        setItems((rows || []) as any[])
+      }
+    }
+    load()
+  }, [product?.id, product?.items])
+
+  const addItem = () => setItems(prev => [...prev, { name: '', quantity: 1, unit_cost: 0, inventory_item_id: null }])
   const updateItem = (idx: number, key: string, value: any) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, [key]: value } : it))
   const removeItem = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx))
+
+  // Picking an inventory item snapshots its name/sku/cost onto the BOM line and
+  // links it; "__custom" switches the line to a free-text name.
+  const selectInventory = (idx: number, value: string) => {
+    if (value === '__custom') {
+      setItems(prev => prev.map((it, i) => i === idx ? { ...it, inventory_item_id: null, __custom: true } : it))
+      return
+    }
+    if (!value) {
+      setItems(prev => prev.map((it, i) => i === idx ? { ...it, inventory_item_id: null, __custom: false, name: '', sku: '' } : it))
+      return
+    }
+    const inv = inventory.find(v => v.id === value)
+    setItems(prev => prev.map((it, i) => i === idx ? {
+      ...it,
+      inventory_item_id: value,
+      __custom: false,
+      name: inv?.name || it.name,
+      sku: inv?.sku || '',
+      unit_cost: Number(inv?.unit_cost) || 0,
+    } : it))
+  }
 
   const handleSave = async () => {
     let effectiveUserId = userId
@@ -39,11 +86,15 @@ export default function ProductEditor({ userId, product, onSaved, onCancel }: Pr
       // normalize numeric fields
       const sp = suggestedPrice === '' || suggestedPrice == null ? null : Number(suggestedPrice)
       const et = estTime === '' || estTime == null ? null : Number(estTime)
-      const normalizedItems = items.map(it => ({
-        name: it.name,
-        quantity: Number(it.quantity) || 0,
-        unit_cost: Number(it.unit_cost) || 0,
-      }))
+      const normalizedItems = items
+        .filter(it => (it.name && it.name.trim()) || it.inventory_item_id)
+        .map(it => ({
+          name: it.name,
+          sku: it.sku || null,
+          quantity: Number(it.quantity) || 0,
+          unit_cost: Number(it.unit_cost) || 0,
+          inventory_item_id: it.inventory_item_id || null,
+        }))
 
       if (product?.id) {
         const { error: updErr } = await supabase.from('products').update({ name, suggested_price: sp, est_time: et }).eq('id', product.id)
@@ -119,14 +170,37 @@ export default function ProductEditor({ userId, product, onSaved, onCancel }: Pr
         )}
 
         <div className="space-y-2">
-          {items.map((it, idx) => (
-            <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-              <input className={`col-span-6 ${cellClass}`} value={it.name} onChange={e => updateItem(idx, 'name', e.target.value)} placeholder="Item name" />
-              <input className={`col-span-2 ${cellClass}`} value={it.quantity} onChange={e => updateItem(idx, 'quantity', Number(e.target.value))} type="number" />
-              <input className={`col-span-3 ${cellClass}`} value={it.unit_cost} onChange={e => updateItem(idx, 'unit_cost', Number(e.target.value))} type="number" step="0.01" />
-              <button className="col-span-1 text-red-500 hover:text-red-400 text-lg leading-none" onClick={() => removeItem(idx)} title="Remove">✕</button>
-            </div>
-          ))}
+          {items.map((it, idx) => {
+            const linked = inventory.find(v => v.id === it.inventory_item_id)
+            const isCustom = !it.inventory_item_id && (it.__custom || !!it.name)
+            const u = linked ? unitShort(linked.unit) : ''
+            return (
+              <div key={idx} className="grid grid-cols-12 gap-2 items-start">
+                <div className="col-span-6 space-y-1">
+                  <select
+                    className={cellClass}
+                    value={it.inventory_item_id || (isCustom ? '__custom' : '')}
+                    onChange={e => selectInventory(idx, e.target.value)}
+                  >
+                    <option value="">Select inventory item…</option>
+                    {inventory.map(v => (
+                      <option key={v.id} value={v.id}>{v.name}{v.unit ? ` (${unitShort(v.unit)})` : ''}</option>
+                    ))}
+                    <option value="__custom">Custom item…</option>
+                  </select>
+                  {isCustom && (
+                    <input className={cellClass} value={it.name} onChange={e => updateItem(idx, 'name', e.target.value)} placeholder="Custom item name" />
+                  )}
+                </div>
+                <div className="col-span-2">
+                  <input className={cellClass} value={it.quantity} onChange={e => updateItem(idx, 'quantity', Number(e.target.value))} type="number" />
+                  {u && <span className="text-[10px] text-gray-500 pl-1">{u}</span>}
+                </div>
+                <input className={`col-span-3 ${cellClass}`} value={it.unit_cost} onChange={e => updateItem(idx, 'unit_cost', Number(e.target.value))} type="number" step="0.01" title={linked ? 'From inventory (editable)' : undefined} />
+                <button className="col-span-1 text-red-500 hover:text-red-400 text-lg leading-none pt-1" onClick={() => removeItem(idx)} title="Remove">✕</button>
+              </div>
+            )
+          })}
           {items.length === 0 && (
             <p className="text-gray-500 text-sm">No materials yet — add items to build the bill of materials.</p>
           )}

@@ -3,6 +3,7 @@
 All notable changes to this project are documented in this file.
 
 ## Unreleased
+- Template bill-of-materials lines can now **link to an actual inventory item** (migration 011): the product editor's BOM rows are an inventory picker (or "Custom item…") that inherits the item's name/SKU/unit/cost, and order creation deducts by `inventory_item_id` when linked (falling back to SKU/name). Also fixed a bug where editing a template loaded an empty BOM and wiped it on save — the editor now loads its own items.
 - Inventory items now have a **category** (material / finished good / component / packaging) and a **unit of measure** (each / g / kg / ml / l) — migration 010. The inventory form adds Category + Unit dropdowns (category defaults the unit) with unit-aware labels ("Quantity on hand (g)", "Cost per g ($)"), and the list shows the category and unit. Existing rows default to component/each.
 - Clearer labeled inventory & product-template forms; added the missing "Estimated time (hours)" field to the product editor.
 - Add `npm run migrate`: a `pg`-based Node runner (`scripts/migrate.mjs`) that applies pending `db/migrations/` files in order and tracks them in a `schema_migrations` table (no `psql` required). Reads `SUPABASE_DB_URL` from env/`.env.local`. Made migrations 005/006 idempotent (`drop policy if exists`) so re-runs are safe.

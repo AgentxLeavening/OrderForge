@@ -24,6 +24,7 @@ type ProductItem = {
   id?: string
   name: string
   sku?: string | null
+  inventory_item_id?: string | null
   quantity: number
   unit_cost: number
 }
@@ -154,12 +155,18 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
               const needed = Number(it.quantity) || 0
               if (!needed) continue
 
-              // try to find inventory by SKU first, then by name
+              // Prefer the directly-linked inventory item; fall back to SKU, then name.
               const { data: invRows } = await supabase
                 .from('inventory_items')
                 .select('id')
                 .eq('user_id', userId)
-                .match(it.sku ? { sku: it.sku } : { name: it.name })
+                .match(
+                  it.inventory_item_id
+                    ? { id: it.inventory_item_id }
+                    : it.sku
+                      ? { sku: it.sku }
+                      : { name: it.name }
+                )
 
               const row = (invRows || [])[0]
               if (!row) {
@@ -222,7 +229,7 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
 
                 const { data } = await supabase
                   .from('product_items')
-                  .select('id, name, sku, quantity, unit_cost')
+                  .select('id, name, sku, inventory_item_id, quantity, unit_cost')
                   .eq('product_id', pid)
 
                 const prod = products.find(p => p.id === pid) || null
