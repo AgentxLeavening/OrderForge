@@ -2,12 +2,14 @@
 -- This allows authenticated users to manage their own templates
 
 alter table products enable row level security;
+drop policy if exists "Products owners can manage their rows" on products;
 create policy "Products owners can manage their rows" on products
   for all
   using ( auth.uid() = user_id )
   with check ( auth.uid() = user_id );
 
 alter table product_items enable row level security;
+drop policy if exists "Product items owner via product" on product_items;
 create policy "Product items owner via product" on product_items
   for all
   using (

@@ -3,6 +3,7 @@
 All notable changes to this project are documented in this file.
 
 ## Unreleased
+- Add `npm run migrate`: a `pg`-based Node runner (`scripts/migrate.mjs`) that applies pending `db/migrations/` files in order and tracks them in a `schema_migrations` table (no `psql` required). Reads `SUPABASE_DB_URL` from env/`.env.local`. Made migrations 005/006 idempotent (`drop policy if exists`) so re-runs are safe.
 - Support one-off marketplace sales: add `sales_channel` and freeform `buyer_name` to orders (migration 009), surfaced in the new-order and order-detail forms so a sale doesn't require a client record. Invoices fall back to the buyer name when no client is set, and the dashboard adds a "Sales by Channel" breakdown that includes one-off/no-client orders.
 - Add `inventory_transactions` table and related migration (audit logging for inventory changes).
 - Wire inventory admin UI to insert `inventory_transactions` on create/update/delete.

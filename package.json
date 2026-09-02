@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest"
+    "test": "vitest",
+    "migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
@@ -15,6 +16,7 @@
     "@supabase/supabase-js": "^2.112.4",
     "next": "16.3.4",
     "pdf-lib": "^1.17.1",
+    "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

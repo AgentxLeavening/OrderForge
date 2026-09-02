@@ -37,20 +37,29 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 ## Database migrations
 
-This project uses SQL migrations in `db/migrations/`. After pulling changes that add or modify migrations, run them against your Supabase/Postgres database before starting the app.
+This project uses SQL migrations in `db/migrations/`. After pulling changes that add or modify migrations, apply them to your Supabase/Postgres database before starting the app.
 
-Example (psql):
+### Recommended: `npm run migrate`
 
-```bash
-psql "<YOUR_DB_URL>" -f db/migrations/004_create_inventory_transactions.sql
-psql "<YOUR_DB_URL>" -f db/migrations/005_enable_rls_products.sql
-psql "<YOUR_DB_URL>" -f db/migrations/006_enable_rls_inventory.sql
-psql "<YOUR_DB_URL>" -f db/migrations/007_deduct_inventory_function.sql
-psql "<YOUR_DB_URL>" -f db/migrations/008_inventory_transactions_nullable_item.sql
-psql "<YOUR_DB_URL>" -f db/migrations/009_add_sales_channel_and_buyer_to_orders.sql
-```
+A small Node runner (`scripts/migrate.mjs`, uses the `pg` driver — no `psql` needed) applies every pending migration in filename order and records applied ones in a `schema_migrations` table, so it's safe to run repeatedly.
 
-Replace `<YOUR_DB_URL>` with your Supabase connection string (service role not required for these migrations, run as your DB owner).
+1. Add your database connection string to `.env.local` (get it from Supabase → **Project Settings → Database → Connection string → URI**):
 
-If you prefer the Supabase SQL editor, copy/paste the contents of the migration files there and run them.
+   ```bash
+   SUPABASE_DB_URL="postgresql://postgres:[PASSWORD]@db.<ref>.supabase.co:5432/postgres"
+   ```
+
+   > Tip: if the direct `db.<ref>.supabase.co` host isn't reachable on your network (it's IPv6-only), use the **Session pooler** connection string from the same page instead.
+
+2. Run:
+
+   ```bash
+   npm run migrate
+   ```
+
+All migrations are idempotent, so the first run against a database where some were already applied by hand is safe — it re-applies and then records them.
+
+### Alternative: Supabase SQL editor
+
+Copy/paste the contents of each migration file (in order) into the Supabase SQL editor and run them. `SUPABASE_DB_URL` is not needed for this route.
 
