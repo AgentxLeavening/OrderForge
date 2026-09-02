@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { generateInvoicePdf } from '@/lib/generateInvoicePdf'
+import { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 
 
 type Order = {
@@ -17,6 +18,13 @@ type Order = {
   notes: string | null
   created_at: string
   client_id: string | null
+  sales_channel: string | null
+  buyer_name: string | null
+  suggested_price: number | null
+  material_cost: number | null
+  labor_cost: number | null
+  markup: number | null
+  fee_pct: number | null
 }
 
 type LineItem = {
@@ -53,6 +61,9 @@ const STATUS_COLORS: Record<string, string> = {
   complete: 'bg-green-500/20 text-green-400',
 }
 
+const channelLabel = (value: string | null | undefined) =>
+  CHANNEL_OPTIONS.find(o => o.value === (value || ''))?.label ?? (value || '')
+
 export default function OrderDetailPage() {
   const router = useRouter()
   const params = useParams()
@@ -70,6 +81,8 @@ export default function OrderDetailPage() {
   const [type, setType] = useState('')
   const [status, setStatus] = useState('')
   const [clientId, setClientId] = useState('')
+  const [salesChannel, setSalesChannel] = useState('')
+  const [buyerName, setBuyerName] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
 
@@ -104,6 +117,8 @@ export default function OrderDetailPage() {
       setType(orderData.type)
       setStatus(orderData.status)
       setClientId(orderData.client_id || '')
+      setSalesChannel(orderData.sales_channel || '')
+      setBuyerName(orderData.buyer_name || '')
       setDueDate(orderData.due_date || '')
       setNotes(orderData.notes || '')
 
@@ -129,6 +144,8 @@ export default function OrderDetailPage() {
         type,
         status,
         client_id: clientId || null,
+        sales_channel: salesChannel || null,
+        buyer_name: buyerName.trim() || null,
         due_date: dueDate || null,
         notes,
         updated_at: new Date().toISOString(),
@@ -220,8 +237,9 @@ const handleGenerateInvoice = async () => {
     invoiceNumber,
     businessName: profile?.business_name || 'My Shop',
     ownerName: profile?.name || '',
-    clientName: clientData?.name || undefined,
+    clientName: clientData?.name || buyerName || undefined,
     clientEmail: clientData?.email || undefined,
+    salesChannel: salesChannel ? channelLabel(salesChannel) : undefined,
     createdAt: new Date().toLocaleDateString(),
     dueDate: dueDate ? new Date(dueDate).toLocaleDateString() : undefined,
     lineItems,
@@ -240,20 +258,6 @@ const handleGenerateInvoice = async () => {
 }
   return (
     <div className="min-h-screen bg-gray-950">
-      {/* Nav */}
-      <nav className="border-b border-gray-800 bg-gray-900 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link href="/dashboard" className="text-gray-500 hover:text-white transition text-sm">
-            ← Back
-          </Link>
-          <span className="text-gray-700">|</span>
-          <span className="text-indigo-400 font-bold">OrderForge</span>
-        </div>
-        <span className={`text-xs font-semibold px-3 py-1 rounded-full ${STATUS_COLORS[status]}`}>
-          {STATUS_OPTIONS.find(s => s.value === status)?.label}
-        </span>
-      </nav>
-
       <main className="max-w-4xl mx-auto px-6 py-10">
         {/* Order Header */}
         <div className="flex items-start justify-between mb-8 gap-4">
@@ -264,6 +268,16 @@ const handleGenerateInvoice = async () => {
               onChange={e => setTitle(e.target.value)}
               className="text-3xl font-bold text-white bg-transparent border-b border-transparent hover:border-gray-700 focus:border-indigo-500 focus:outline-none w-full pb-1 transition"
             />
+            {(buyerName || salesChannel) && (
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                {buyerName && (
+                  <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full">🛒 {buyerName}</span>
+                )}
+                {salesChannel && (
+                  <span className="text-xs bg-indigo-500/15 text-indigo-300 px-2 py-1 rounded-full">{channelLabel(salesChannel)}</span>
+                )}
+              </div>
+            )}
           </div>
           <button
             onClick={saveOrder}
@@ -293,7 +307,31 @@ const handleGenerateInvoice = async () => {
             </div>
 
             <div>
-              <label className="text-sm text-gray-400 mb-1 block">Client</label>
+              <label className="text-sm text-gray-400 mb-1 block">Sales channel</label>
+              <select
+                value={salesChannel}
+                onChange={e => setSalesChannel(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500"
+              >
+                {CHANNEL_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm text-gray-400 mb-1 block">Buyer / handle</label>
+              <input
+                type="text"
+                value={buyerName}
+                onChange={e => setBuyerName(e.target.value)}
+                placeholder="e.g. Etsy username (optional)"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm text-gray-400 mb-1 block">Client <span className="text-gray-600">(optional)</span></label>
               <select
                 value={clientId}
                 onChange={e => setClientId(e.target.value)}
@@ -342,6 +380,34 @@ const handleGenerateInvoice = async () => {
             />
           </div>
         </div>
+
+        {/* Pricing & Margin (internal — from the suggested price basis) */}
+        {order && (order.suggested_price != null || order.material_cost != null) && (() => {
+          const price = Number(order.suggested_price) || 0
+          const material = Number(order.material_cost) || 0
+          const labor = Number(order.labor_cost) || 0
+          const cost = material + labor
+          const feeAmt = price * (Number(order.fee_pct) || 0) / 100
+          const profit = price - cost - feeAmt
+          const marginPct = price > 0 ? (profit / price) * 100 : 0
+          return (
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
+              <h2 className="text-white font-semibold mb-4">Pricing &amp; Margin</h2>
+              <div className="space-y-1.5 max-w-md">
+                <div className="flex justify-between text-sm text-gray-300"><span>Materials</span><span>${material.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-gray-300"><span>Labor</span><span>${labor.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-gray-400 border-t border-gray-800 pt-1.5"><span>Cost</span><span>${cost.toFixed(2)}</span></div>
+                {order.markup != null && <div className="flex justify-between text-sm text-gray-500"><span>Markup</span><span>×{Number(order.markup)}</span></div>}
+                {order.fee_pct != null && <div className="flex justify-between text-sm text-gray-500"><span>Marketplace fee ({Number(order.fee_pct)}%)</span><span>−${feeAmt.toFixed(2)}</span></div>}
+                <div className="flex justify-between text-sm text-gray-300 border-t border-gray-800 pt-1.5"><span>Suggested price</span><span className="text-white font-semibold">${price.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm border-t border-gray-800 pt-1.5">
+                  <span className="text-gray-300">Est. profit</span>
+                  <span className={profit >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>${profit.toFixed(2)} ({marginPct.toFixed(0)}%)</span>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Line Items */}
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">

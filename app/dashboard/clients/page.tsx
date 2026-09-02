@@ -106,17 +106,6 @@ export default function ClientsPage() {
 
   return (
     <div className="min-h-screen bg-gray-950">
-      {/* Nav */}
-      <nav className="border-b border-gray-800 bg-gray-900 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link href="/dashboard" className="text-gray-500 hover:text-white transition text-sm">
-            ← Dashboard
-          </Link>
-          <span className="text-gray-700">|</span>
-          <span className="text-indigo-400 font-bold">OrderForge</span>
-        </div>
-      </nav>
-
       <main className="max-w-5xl mx-auto px-6 py-10">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">

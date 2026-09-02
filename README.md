@@ -34,3 +34,32 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Database migrations
+
+This project uses SQL migrations in `db/migrations/`. After pulling changes that add or modify migrations, apply them to your Supabase/Postgres database before starting the app.
+
+### Recommended: `npm run migrate`
+
+A small Node runner (`scripts/migrate.mjs`, uses the `pg` driver — no `psql` needed) applies every pending migration in filename order and records applied ones in a `schema_migrations` table, so it's safe to run repeatedly.
+
+1. Add your database connection string to `.env.local` (get it from Supabase → **Project Settings → Database → Connection string → URI**):
+
+   ```bash
+   SUPABASE_DB_URL="postgresql://postgres:[PASSWORD]@db.<ref>.supabase.co:5432/postgres"
+   ```
+
+   > Tip: if the direct `db.<ref>.supabase.co` host isn't reachable on your network (it's IPv6-only), use the **Session pooler** connection string from the same page instead.
+
+2. Run:
+
+   ```bash
+   npm run migrate
+   ```
+
+All migrations are idempotent, so the first run against a database where some were already applied by hand is safe — it re-applies and then records them.
+
+### Alternative: Supabase SQL editor
+
+Copy/paste the contents of each migration file (in order) into the Supabase SQL editor and run them. `SUPABASE_DB_URL` is not needed for this route.
+
