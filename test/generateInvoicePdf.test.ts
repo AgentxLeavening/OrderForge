@@ -19,8 +19,8 @@ describe('generateInvoicePdf', () => {
     } as any)
 
     expect(pdf).toBeDefined()
-    // pdf-lib returns Uint8Array or ArrayBuffer; check length
-    const len = (pdf as ArrayBuffer).byteLength || (pdf as Uint8Array).length
+    // pdf-lib returns a Uint8Array (which also exposes byteLength)
+    const len = (pdf as unknown as Uint8Array).byteLength
     expect(len).toBeGreaterThan(0)
   })
 })

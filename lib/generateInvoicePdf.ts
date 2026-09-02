@@ -126,7 +126,7 @@ export async function generateInvoicePdf(data: InvoiceData): Promise<Uint8Array>
   const total = subtotal + taxAmount
 
   const totalsX = 390
-  page.drawRectangle({ x: totalsX - 12, y: y - 70, width: width - totalsX - 36, height: 90, color: LIGHT, borderRadius: 4 })
+  page.drawRectangle({ x: totalsX - 12, y: y - 70, width: width - totalsX - 36, height: 90, color: LIGHT })
 
   page.drawText('Subtotal', { x: totalsX, y, font: fontRegular, size: 11, color: GRAY })
   page.drawText(`$${subtotal.toFixed(2)}`, { x: 524, y, font: fontRegular, size: 11, color: BLACK })
