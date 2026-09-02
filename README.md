@@ -44,6 +44,9 @@ Example (psql):
 ```bash
 psql "<YOUR_DB_URL>" -f db/migrations/004_create_inventory_transactions.sql
 psql "<YOUR_DB_URL>" -f db/migrations/005_enable_rls_products.sql
+psql "<YOUR_DB_URL>" -f db/migrations/006_enable_rls_inventory.sql
+psql "<YOUR_DB_URL>" -f db/migrations/007_deduct_inventory_function.sql
+psql "<YOUR_DB_URL>" -f db/migrations/008_inventory_transactions_nullable_item.sql
 ```
 
 Replace `<YOUR_DB_URL>` with your Supabase connection string (service role not required for these migrations, run as your DB owner).

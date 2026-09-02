@@ -13,8 +13,8 @@ type Tx = {
   reason: string | null
   metadata: any
   created_at: string
-  inventory_items?: { id: string; name?: string; sku?: string }[]
-  orders?: { id: string; order_number?: string }[]
+  inventory_items?: { id: string; name?: string; sku?: string } | null
+  orders?: { id: string; order_number?: string } | null
 }
 
 export default function InventoryTransactionsPage() {
@@ -70,13 +70,13 @@ export default function InventoryTransactionsPage() {
             {loading ? <p className="text-gray-400 px-2">Loading…</p> : txs.length === 0 ? <p className="text-gray-400 px-2">No transactions yet.</p> : txs.map(tx => (
               <div key={tx.id} className="grid grid-cols-12 gap-2 items-center bg-gray-800 rounded-lg px-4 py-3">
                 <div className="col-span-2 text-gray-300">{new Date(tx.created_at).toLocaleString()}</div>
-                <div className="col-span-3 text-white">{tx.inventory_items?.[0]?.name || 'Unknown' } <span className="text-gray-400">{tx.inventory_items?.[0]?.sku ? `(${tx.inventory_items?.[0]?.sku})` : ''}</span></div>
+                <div className="col-span-3 text-white">{tx.inventory_items?.name || tx.metadata?.name || 'Unknown' } <span className="text-gray-400">{(tx.inventory_items?.sku || tx.metadata?.sku) ? `(${tx.inventory_items?.sku || tx.metadata?.sku})` : ''}</span></div>
                 <div className={`col-span-2 text-center ${tx.change < 0 ? 'text-red-400' : 'text-green-400'}`}>{tx.change > 0 ? `+${tx.change}` : tx.change}</div>
                 <div className="col-span-2 text-center text-white">{tx.previous_quantity ?? '—'} → {tx.new_quantity ?? '—'}</div>
                 <div className="col-span-2 text-gray-300">{tx.reason || tx.metadata?.reason || '—'}</div>
                 <div className="col-span-1 text-right">
-                  {tx.orders?.[0]?.id ? (
-                    <Link href={`/dashboard/orders/${tx.orders[0].id}`} className="text-indigo-400 hover:underline">Order</Link>
+                  {tx.orders?.id ? (
+                    <Link href={`/dashboard/orders/${tx.orders.id}`} className="text-indigo-400 hover:underline">Order</Link>
                   ) : null}
                 </div>
               </div>

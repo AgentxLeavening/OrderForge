@@ -58,8 +58,13 @@ export default function InventoryPage() {
           }
         }
       } else {
-        // insert new item and log creation
-        const { data: insData, error: insErr } = await supabase.from('inventory_items').insert(item).select().single()
+        // insert new item and log creation (user_id is required — NOT NULL)
+        if (!userId) {
+          console.warn('Cannot create inventory item: no signed-in user')
+          setEditing(null)
+          return
+        }
+        const { data: insData, error: insErr } = await supabase.from('inventory_items').insert({ ...item, user_id: userId }).select().single()
         if (insErr) console.warn('Failed inserting inventory item', insErr)
         else {
           const newId = (insData as any)?.id
@@ -101,8 +106,11 @@ export default function InventoryPage() {
       if (error) console.warn('Failed deleting inventory item', error)
       else {
         try {
+          // The item is already gone, so we can't reference it via the FK
+          // (inventory_item_id is nullable + ON DELETE SET NULL per migration 008).
+          // The name/sku are preserved in metadata for the transactions viewer.
           await supabase.from('inventory_transactions').insert({
-            inventory_item_id: id,
+            inventory_item_id: null,
             user_id: userId,
             order_id: null,
             change: -Math.abs(prevQty),

@@ -12,6 +12,7 @@ type ClientOption = {
 type ProductItem = {
   id?: string
   name: string
+  sku?: string | null
   quantity: number
   unit_cost: number
 }
@@ -129,16 +130,19 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
 
           const { error: itemsErr } = await supabase.from('order_items').insert(itemsToInsert)
           if (itemsErr) console.warn('Failed inserting order_items from template', itemsErr)
-          // Attempt to deduct inventory for each BOM item (best-effort)
+          // Attempt to deduct inventory for each BOM item (best-effort).
+          // The decrement + audit-log happen atomically inside the
+          // deduct_inventory_for_order DB function (row-locked) so concurrent
+          // orders can't race and lose updates. See migration 007.
           try {
             for (const it of selectedProduct.items) {
               const needed = Number(it.quantity) || 0
               if (!needed) continue
 
               // try to find inventory by SKU first, then by name
-              let { data: invRows } = await supabase
+              const { data: invRows } = await supabase
                 .from('inventory_items')
-                .select('id, quantity')
+                .select('id')
                 .eq('user_id', userId)
                 .match(it.sku ? { sku: it.sku } : { name: it.name })
 
@@ -148,36 +152,17 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
                 continue
               }
 
-              const current = Number(row.quantity) || 0
-              const newQty = Math.max(0, current - needed)
-              const { error: invErr } = await supabase
-                .from('inventory_items')
-                .update({ quantity: newQty })
-                .eq('id', row.id)
-
-              if (invErr) console.warn('Failed updating inventory for', it.name, invErr)
-              else {
-                // Log the inventory transaction for auditing
-                try {
-                  const change = Number(newQty) - Number(current)
-                  await supabase.from('inventory_transactions').insert({
-                    inventory_item_id: row.id,
-                    user_id: userId,
-                    order_id: orderId,
-                    change,
-                    previous_quantity: current,
-                    new_quantity: newQty,
-                    reason: 'order_template_deduction',
-                    metadata: {
-                      product_id: selectedProduct?.id || null,
-                      product_name: selectedProduct?.name || null,
-                      bom_item_name: it.name || null,
-                    },
-                  })
-                } catch (txErr) {
-                  console.warn('Failed inserting inventory transaction for', it.name, txErr)
-                }
-              }
+              const { error: rpcErr } = await supabase.rpc('deduct_inventory_for_order', {
+                p_order_id: orderId,
+                p_inventory_item_id: row.id,
+                p_quantity: needed,
+                p_metadata: {
+                  product_id: selectedProduct?.id || null,
+                  product_name: selectedProduct?.name || null,
+                  bom_item_name: it.name || null,
+                },
+              })
+              if (rpcErr) console.warn('Failed deducting inventory for', it.name, rpcErr)
             }
           } catch (e) {
             console.warn('Inventory deduction failed', e)
@@ -221,7 +206,7 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
 
                 const { data } = await supabase
                   .from('product_items')
-                  .select('id, name, quantity, unit_cost')
+                  .select('id, name, sku, quantity, unit_cost')
                   .eq('product_id', pid)
 
                 const prod = products.find(p => p.id === pid) || null

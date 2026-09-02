@@ -17,5 +17,3 @@ create table if not exists inventory_items (
 --   reason text,
 --   created_at timestamptz default now()
 -- );
-psql "https://qpbvvkgxlctnthlzusml.supabase.co" -f db/migrations/002_add_suggested_price_to_orders.sql
-psql "https://qpbvvkgxlctnthlzusml.supabase.co" -f db/migrations/003_create_inventory_items.sql
