@@ -30,12 +30,14 @@ type ProductItem = {
 }
 
 type Product = {
-  id: string
+  id?: string
   name: string
   suggested_price?: number | null
   est_time?: number | null
   items?: ProductItem[]
 }
+
+type InventoryOption = { id: string; name: string; category?: string | null; unit?: string | null; unit_cost?: number | null; sku?: string | null }
 
 type Props = {
   userId: string
@@ -53,6 +55,10 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
   const [products, setProducts] = useState<Product[]>([])
   const [selectedProductId, setSelectedProductId] = useState('')
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+  const [inventoryOptions, setInventoryOptions] = useState<InventoryOption[]>([])
+  const [selectedInventoryId, setSelectedInventoryId] = useState('')
+  const [directQty, setDirectQty] = useState(1)
+  const [packHours, setPackHours] = useState(0)
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
   const [markup, setMarkup] = useState(1.5)
@@ -97,6 +103,17 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
 
     fetchProducts()
 
+    const fetchInventory = async () => {
+      const { data } = await supabase
+        .from('inventory_items')
+        .select('id, name, category, unit, unit_cost, sku')
+        .eq('user_id', userId)
+        .order('name', { ascending: true })
+      setInventoryOptions((data || []) as InventoryOption[])
+    }
+
+    fetchInventory()
+
     const fetchProfile = async () => {
       const { data } = await supabase
         .from('profiles')
@@ -112,6 +129,26 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
 
     fetchProfile()
   }, [userId])
+
+  // Selecting an inventory item builds a synthetic one-line "template" so the
+  // existing pricing + deduction logic works with no product template.
+  const applyFinishedGood = (invId: string, qty: number, hours: number) => {
+    const inv = inventoryOptions.find(i => i.id === invId)
+    if (!inv) { setSelectedProduct(null); return }
+    setSelectedProduct({
+      name: inv.name,
+      suggested_price: null,
+      est_time: hours || 0,
+      items: [{
+        name: inv.name,
+        sku: inv.sku,
+        inventory_item_id: inv.id,
+        quantity: qty || 0,
+        unit_cost: Number(inv.unit_cost) || 0,
+      }],
+    })
+    if (!title) setTitle(inv.name)
+  }
 
   // Suggested price = (materials + labor) × markup, grossed up to cover fees.
   const hasLiveCost = (selectedProduct?.items || []).some(it => it.inventory_item_id)
@@ -248,6 +285,7 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
               onChange={async e => {
                 const pid = e.target.value
                 setSelectedProductId(pid)
+                setSelectedInventoryId('')
                 if (!pid) {
                   setSelectedProduct(null)
                   return
@@ -277,6 +315,40 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
+
+            {!selectedProductId && (
+              <div className="mb-3">
+                <label className="text-sm text-gray-400 mb-1 block">…or sell an inventory item directly</label>
+                <select
+                  value={selectedInventoryId}
+                  onChange={e => {
+                    const id = e.target.value
+                    setSelectedInventoryId(id)
+                    setSelectedProductId('')
+                    setDirectQty(1)
+                    setPackHours(0)
+                    applyFinishedGood(id, 1, 0)
+                  }}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="">No inventory item</option>
+                  {inventoryOptions.map(inv => (
+                    <option key={inv.id} value={inv.id}>{inv.name}{inv.unit ? ` (${inv.unit})` : ''}</option>
+                  ))}
+                </select>
+
+                {selectedInventoryId && (
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <label className="text-xs text-gray-400">Quantity to sell
+                      <input value={directQty} onChange={e => { const q = Number(e.target.value); setDirectQty(q); applyFinishedGood(selectedInventoryId, q, packHours) }} type="number" className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500" />
+                    </label>
+                    <label className="text-xs text-gray-400">Packing time (hours)
+                      <input value={packHours} onChange={e => { const h = Number(e.target.value); setPackHours(h); applyFinishedGood(selectedInventoryId, directQty, h) }} type="number" step="0.25" className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500" />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
 
             {selectedProduct && (
               <div className="mb-3">
