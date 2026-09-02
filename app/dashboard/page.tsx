@@ -6,7 +6,16 @@ import { useRouter } from 'next/navigation'
 import NewOrderModal, { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 import DashboardWidget from '@/app/components/DashboardWidget'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
+import { isLowStock, unitShort } from '@/lib/inventory'
 import Link from 'next/link'
+
+type LowStockItem = {
+  id: string
+  name: string
+  quantity: number
+  unit?: string | null
+  reorder_threshold: number
+}
 
 type Profile = {
   id: string
@@ -70,6 +79,7 @@ export default function DashboardPage() {
   const [clients, setClients] = useState<ClientOption[]>([])
   const [topRevenueClients, setTopRevenueClients] = useState<{ name: string; total: number }[]>([])
   const [invoiceCounts, setInvoiceCounts] = useState<{ name: string; count: number }[]>([])
+  const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
   const [selectedClientId, setSelectedClientId] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -162,9 +172,15 @@ export default function DashboardPage() {
         .eq('user_id', user.id)
         .order('name', { ascending: true })
 
+      const { data: inventory } = await supabase
+        .from('inventory_items')
+        .select('id, name, quantity, unit, reorder_threshold')
+        .eq('user_id', user.id)
+
       setProfile(data)
       setLayout(data?.dashboard_layout || DEFAULT_LAYOUT)
       setClients(clientData || [])
+      setLowStockItems(((inventory || []) as LowStockItem[]).filter(isLowStock))
       await fetchOrders(user.id)
       setLoading(false)
     }
@@ -650,6 +666,29 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
+
+        {/* Low-stock alert */}
+        {lowStockItems.length > 0 && (
+          <div className="mb-8 bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-amber-300 font-semibold">
+                  ⚠️ Low stock · {lowStockItems.length} {lowStockItems.length === 1 ? 'item' : 'items'}
+                </p>
+                <p className="text-amber-200/70 text-sm mt-0.5">
+                  {lowStockItems.slice(0, 4).map(i => `${i.name} (${i.quantity} ${unitShort(i.unit)})`).join(', ')}
+                  {lowStockItems.length > 4 && ` +${lowStockItems.length - 4} more`}
+                </p>
+              </div>
+              <Link
+                href="/dashboard/inventory"
+                className="text-amber-300 hover:text-amber-200 text-sm font-medium whitespace-nowrap"
+              >
+                Manage inventory →
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* Search + Status Filter */}
         <div className="flex flex-col md:flex-row gap-3 mb-10">
