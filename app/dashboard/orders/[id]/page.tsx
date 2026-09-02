@@ -75,6 +75,7 @@ export default function OrderDetailPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   // Editable fields
   const [title, setTitle] = useState('')
@@ -193,6 +194,79 @@ export default function OrderDetailPage() {
     await supabase.from('order_items').update({ quantity: qty }).eq('id', itemId)
   }
 
+  // Delete an order (e.g. cancelled before work started). Restocks any materials
+  // this order deducted, then removes its invoice + line items and the order
+  // itself. inventory_transactions.order_id is ON DELETE SET NULL, so the audit
+  // trail (including the restock entries) survives the delete.
+  const deleteOrder = async () => {
+    if (!order) return
+    if (!confirm(`Delete order ${order.order_number}?\n\nThis restocks any materials it deducted, removes its invoice and line items, and cannot be undone.`)) return
+
+    setDeleting(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+
+      // Reverse each logged deduction. `change` is negative and already reflects
+      // the actual amount removed (deduction clamps at 0), so -change is the
+      // precise restock amount.
+      if (user) {
+        const { data: deductions } = await supabase
+          .from('inventory_transactions')
+          .select('inventory_item_id, change')
+          .eq('order_id', id)
+          .eq('reason', 'order_template_deduction')
+
+        for (const tx of (deductions || []) as { inventory_item_id: string | null; change: number }[]) {
+          const restockAmt = -(Number(tx.change) || 0)
+          if (!tx.inventory_item_id || restockAmt <= 0) continue
+
+          const { data: inv } = await supabase
+            .from('inventory_items')
+            .select('quantity, name, sku')
+            .eq('id', tx.inventory_item_id)
+            .single()
+          if (!inv) continue // item deleted since — nothing to restock
+
+          const prevQty = Number(inv.quantity) || 0
+          const newQty = prevQty + restockAmt
+          await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', tx.inventory_item_id)
+          await supabase.from('inventory_transactions').insert({
+            inventory_item_id: tx.inventory_item_id,
+            user_id: user.id,
+            order_id: id,
+            change: restockAmt,
+            previous_quantity: prevQty,
+            new_quantity: newQty,
+            reason: 'order_deleted_restock',
+            metadata: { name: inv.name, sku: inv.sku, order_number: order.order_number },
+          })
+        }
+      }
+
+      await supabase.from('invoices').delete().eq('order_id', id)
+      await supabase.from('order_items').delete().eq('order_id', id)
+      // .select() so we can tell a real delete from an RLS no-op (which returns
+      // no error but removes 0 rows).
+      const { data: deleted, error } = await supabase.from('orders').delete().eq('id', id).select('id')
+      if (error) {
+        alert('Failed to delete order: ' + error.message)
+        setDeleting(false)
+        return
+      }
+      if (!deleted || deleted.length === 0) {
+        alert('Order could not be deleted — you may not have permission.')
+        setDeleting(false)
+        return
+      }
+
+      router.push('/dashboard')
+    } catch (e) {
+      console.warn('Delete order failed', e)
+      alert('Something went wrong deleting the order.')
+      setDeleting(false)
+    }
+  }
+
   const total = lineItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
 
   if (loading) {
@@ -288,13 +362,22 @@ const handleGenerateInvoice = async () => {
               </div>
             )}
           </div>
-          <button
-            onClick={saveOrder}
-            disabled={saving}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-lg transition disabled:opacity-50 shrink-0"
-          >
-            {saving ? 'Saving...' : saved ? '✓ Saved' : 'Save Changes'}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={deleteOrder}
+              disabled={deleting || saving}
+              className="border border-red-500/40 text-red-400 hover:bg-red-500/10 font-semibold px-4 py-2.5 rounded-lg transition disabled:opacity-50"
+            >
+              {deleting ? 'Deleting...' : 'Delete'}
+            </button>
+            <button
+              onClick={saveOrder}
+              disabled={saving}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-lg transition disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : saved ? '✓ Saved' : 'Save Changes'}
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
