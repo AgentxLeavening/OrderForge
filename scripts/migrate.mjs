@@ -31,23 +31,70 @@ function loadEnvLocal() {
 }
 
 const fileEnv = loadEnvLocal()
-const connectionString =
-  process.env.SUPABASE_DB_URL ||
-  process.env.DATABASE_URL ||
-  fileEnv.SUPABASE_DB_URL ||
-  fileEnv.DATABASE_URL
+const pick = (k) => process.env[k] || fileEnv[k]
 
-if (!connectionString) {
+const connectionString = pick('SUPABASE_DB_URL') || pick('DATABASE_URL')
+
+// Discrete parts let passwords with special characters (@ : / ? # etc.) work
+// without URL-encoding — Supabase passwords often contain them.
+const discrete = {
+  host: pick('SUPABASE_DB_HOST'),
+  port: Number(pick('SUPABASE_DB_PORT') || 5432),
+  user: pick('SUPABASE_DB_USER'),
+  password: pick('SUPABASE_DB_PASSWORD'),
+  database: pick('SUPABASE_DB_NAME') || 'postgres',
+}
+
+const discreteHelp =
+  '  SUPABASE_DB_HOST=aws-0-<region>.pooler.supabase.com\n' +
+  '  SUPABASE_DB_PORT=5432\n' +
+  '  SUPABASE_DB_USER=postgres.qpbvvkgxlctnthlzusml\n' +
+  '  SUPABASE_DB_PASSWORD=your-raw-password   (no quotes/encoding needed)\n'
+
+// Catch leftover template placeholders like <your-region> / <ref> before we
+// hit a confusing DNS/parse error.
+for (const [k, v] of Object.entries({ ...discrete, SUPABASE_DB_URL: connectionString })) {
+  if (typeof v === 'string' && /[<>]/.test(v)) {
+    console.error(`\n✖ ${k} still contains a "<...>" placeholder ("${v}"). Replace it with the real value from your Supabase connection string.\n`)
+    process.exit(1)
+  }
+}
+
+let clientConfig
+if (discrete.host && discrete.user && discrete.password) {
+  clientConfig = { ...discrete, ssl: { rejectUnauthorized: false } }
+} else if (connectionString) {
+  if (/[[\]]/.test(connectionString)) {
+    console.error(
+      '\n✖ SUPABASE_DB_URL still contains "[" or "]".\n\n' +
+      'Looks like the [YOUR-DB-PASSWORD] placeholder is still there — replace it with your real password.\n'
+    )
+    process.exit(1)
+  }
+  clientConfig = { connectionString, ssl: { rejectUnauthorized: false } }
+} else {
   console.error(
-    '\n✖ No database connection string found.\n\n' +
-    'Add one to .env.local (or your shell) as SUPABASE_DB_URL, e.g.:\n\n' +
-    '  SUPABASE_DB_URL="postgresql://postgres:[PASSWORD]@db.<ref>.supabase.co:5432/postgres"\n\n' +
-    'Find it in Supabase → Project Settings → Database → Connection string (URI).\n'
+    '\n✖ No database connection settings found.\n\n' +
+    'Add EITHER a full URL to .env.local:\n\n' +
+    '  SUPABASE_DB_URL="postgresql://postgres.<ref>:[PASSWORD]@aws-0-<region>.pooler.supabase.com:5432/postgres"\n\n' +
+    'OR the discrete parts (best if your password has special characters):\n\n' +
+    discreteHelp +
+    '\nGet these from Supabase → Project Settings → Database → Connection string.\n'
   )
   process.exit(1)
 }
 
-const client = new pg.Client({ connectionString, ssl: { rejectUnauthorized: false } })
+let client
+try {
+  client = new pg.Client(clientConfig)
+} catch (err) {
+  console.error(
+    '\n✖ Could not parse the connection settings: ' + err.message + '\n\n' +
+    'If your password has special characters (@ : / ? # etc.), skip URL-encoding and use the discrete vars in .env.local instead:\n\n' +
+    discreteHelp
+  )
+  process.exit(1)
+}
 
 async function main() {
   await client.connect()
