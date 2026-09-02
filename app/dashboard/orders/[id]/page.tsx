@@ -184,6 +184,15 @@ export default function OrderDetailPage() {
     setLineItems(prev => prev.filter(i => i.id !== itemId))
   }
 
+  // Adjust a line's billing quantity after the fact. This only changes what the
+  // order/invoice bills — it does not re-deduct inventory (that happened at
+  // creation from the product BOM), so treat it as a manual billing correction.
+  const updateLineItemQty = async (itemId: string, value: string) => {
+    const qty = Math.max(1, Number(value) || 1)
+    setLineItems(prev => prev.map(i => (i.id === itemId ? { ...i, quantity: qty } : i)))
+    await supabase.from('order_items').update({ quantity: qty }).eq('id', itemId)
+  }
+
   const total = lineItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
 
   if (loading) {
@@ -431,7 +440,13 @@ const handleGenerateInvoice = async () => {
             {lineItems.map(item => (
               <div key={item.id} className="grid grid-cols-12 gap-2 items-center bg-gray-800 rounded-lg px-4 py-3">
                 <p className="col-span-6 text-white text-sm">{item.description}</p>
-                <p className="col-span-2 text-gray-400 text-sm text-center">{item.quantity}</p>
+                <input
+                  value={item.quantity}
+                  onChange={e => updateLineItemQty(item.id, e.target.value)}
+                  type="number"
+                  min="1"
+                  className="col-span-2 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 text-sm text-center focus:outline-none focus:border-indigo-500"
+                />
                 <p className="col-span-2 text-gray-400 text-sm text-right">${item.unit_price.toFixed(2)}</p>
                 <div className="col-span-2 flex items-center justify-end gap-2">
                   <p className="text-white text-sm font-medium">${(item.quantity * item.unit_price).toFixed(2)}</p>
