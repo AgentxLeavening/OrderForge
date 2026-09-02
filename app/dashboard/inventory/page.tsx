@@ -2,11 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { INVENTORY_CATEGORIES, INVENTORY_UNITS, categoryLabel, defaultUnitForCategory, unitShort } from '@/lib/inventory'
 
 type Item = {
   id: string
   name: string
   sku?: string
+  category?: string
+  unit?: string
   quantity: number
   unit_cost: number
 }
@@ -145,19 +148,23 @@ export default function InventoryPage() {
         ) : (
           <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
             <div className="grid grid-cols-12 gap-2 text-gray-400 text-xs uppercase tracking-wide px-2 mb-2">
-              <div className="col-span-5">Name</div>
+              <div className="col-span-4">Name</div>
+              <div className="col-span-2">Category</div>
               <div className="col-span-2">SKU</div>
-              <div className="col-span-2 text-center">Qty</div>
-              <div className="col-span-2 text-right">Unit</div>
+              <div className="col-span-2 text-center">On hand</div>
+              <div className="col-span-1 text-right">Cost</div>
               <div className="col-span-1" />
             </div>
             <div className="space-y-2">
               {items.map(it => (
                 <div key={it.id} className="grid grid-cols-12 gap-2 items-center bg-gray-800 rounded-lg px-4 py-3">
-                  <div className="col-span-5 text-white">{it.name}</div>
+                  <div className="col-span-4 text-white">{it.name}</div>
+                  <div className="col-span-2">
+                    <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">{categoryLabel(it.category).split(' ')[0]}</span>
+                  </div>
                   <div className="col-span-2 text-gray-400">{it.sku || '—'}</div>
-                  <div className="col-span-2 text-center text-white">{it.quantity}</div>
-                  <div className="col-span-2 text-right text-gray-400">${Number(it.unit_cost || 0).toFixed(2)}</div>
+                  <div className="col-span-2 text-center text-white">{it.quantity} <span className="text-gray-500 text-xs">{unitShort(it.unit)}</span></div>
+                  <div className="col-span-1 text-right text-gray-400">${Number(it.unit_cost || 0).toFixed(2)}</div>
                   <div className="col-span-1 flex items-center justify-end gap-2">
                     <button onClick={() => setEditing(it)} className="text-gray-400 hover:text-white">Edit</button>
                     <button onClick={() => remove(it.id)} className="text-red-500 hover:text-red-400">×</button>
@@ -181,11 +188,21 @@ export default function InventoryPage() {
 function InventoryForm({ item, onSave, onCancel }: { item: Partial<Item>, onSave: (i: Partial<Item>) => Promise<void>, onCancel: () => void }) {
   const [name, setName] = useState(item?.name || '')
   const [sku, setSku] = useState(item?.sku || '')
+  const [category, setCategory] = useState(item?.category || 'material')
+  const [unit, setUnit] = useState(item?.unit || defaultUnitForCategory(item?.category || 'material'))
   const [quantity, setQuantity] = useState(String(item?.quantity ?? 0))
   const [unitCost, setUnitCost] = useState(String(item?.unit_cost ?? 0))
 
   const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500'
   const labelClass = 'text-sm text-gray-400 mb-1 block'
+
+  // Picking a category snaps the unit to that category's default (user can still override).
+  const onCategoryChange = (value: string) => {
+    setCategory(value)
+    setUnit(defaultUnitForCategory(value))
+  }
+
+  const u = unitShort(unit)
 
   return (
     <div>
@@ -197,6 +214,25 @@ function InventoryForm({ item, onSave, onCancel }: { item: Partial<Item>, onSave
           <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Black PLA filament" className={inputClass} />
         </div>
 
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className={labelClass}>Category</label>
+            <select value={category} onChange={e => onCategoryChange(e.target.value)} className={inputClass}>
+              {INVENTORY_CATEGORIES.map(c => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelClass}>Unit of measure</label>
+            <select value={unit} onChange={e => setUnit(e.target.value)} className={inputClass}>
+              {INVENTORY_UNITS.map(un => (
+                <option key={un.value} value={un.value}>{un.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         <div>
           <label className={labelClass}>SKU <span className="text-gray-600">(optional)</span></label>
           <input value={sku} onChange={e => setSku(e.target.value)} placeholder="Optional stock code" className={inputClass} />
@@ -204,18 +240,18 @@ function InventoryForm({ item, onSave, onCancel }: { item: Partial<Item>, onSave
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className={labelClass}>Quantity on hand</label>
+            <label className={labelClass}>Quantity on hand ({u})</label>
             <input value={quantity} onChange={e => setQuantity(e.target.value)} type="number" className={inputClass} />
           </div>
           <div>
-            <label className={labelClass}>Unit cost ($)</label>
+            <label className={labelClass}>Cost per {u} ($)</label>
             <input value={unitCost} onChange={e => setUnitCost(e.target.value)} type="number" step="0.01" className={inputClass} />
           </div>
         </div>
       </div>
 
       <div className="flex gap-3">
-        <button onClick={() => onSave({ id: item.id, name, sku, quantity: Number(quantity || 0), unit_cost: Number(unitCost || 0) })} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded">Save</button>
+        <button onClick={() => onSave({ id: item.id, name, sku, category, unit, quantity: Number(quantity || 0), unit_cost: Number(unitCost || 0) })} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded">Save</button>
         <button onClick={onCancel} className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded">Cancel</button>
       </div>
     </div>
