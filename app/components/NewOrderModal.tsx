@@ -114,6 +114,7 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
   }, [userId])
 
   // Suggested price = (materials + labor) × markup, grossed up to cover fees.
+  const hasLiveCost = (selectedProduct?.items || []).some(it => it.inventory_item_id)
   const materialCost = (selectedProduct?.items || []).reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0)
   const laborCost = (Number(selectedProduct?.est_time) || 0) * (Number(hourlyRate) || 0)
   const costSubtotal = materialCost + laborCost
@@ -250,11 +251,18 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
 
                 const { data } = await supabase
                   .from('product_items')
-                  .select('id, name, sku, inventory_item_id, quantity, unit_cost')
+                  .select('id, name, sku, inventory_item_id, quantity, unit_cost, inventory_items(unit_cost)')
                   .eq('product_id', pid)
 
+                // For linked BOM lines, price from the CURRENT inventory cost
+                // rather than the value snapshotted onto the template.
+                const items = ((data || []) as any[]).map(it => ({
+                  ...it,
+                  unit_cost: it.inventory_items?.unit_cost != null ? Number(it.inventory_items.unit_cost) : it.unit_cost,
+                })) as ProductItem[]
+
                 const prod = products.find(p => p.id === pid) || null
-                setSelectedProduct({ ...(prod as Product), items: (data || []) as ProductItem[] })
+                setSelectedProduct({ ...(prod as Product), items })
                 if (!title && prod) setTitle(prod.name)
                 if (prod?.suggested_price) setNotes(prev => prev + `\nSuggested price: $${Number(prod.suggested_price).toFixed(2)}`)
               }}
@@ -270,7 +278,7 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
               <div className="mb-3">
                 <ProductCard product={selectedProduct} compact />
                 <div className="mt-2 bg-gray-800 border border-gray-700 rounded p-3 space-y-1.5">
-                  <div className="flex justify-between text-sm text-gray-300"><span>Materials</span><span>${materialCost.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-sm text-gray-300"><span>Materials{hasLiveCost ? ' *' : ''}</span><span>${materialCost.toFixed(2)}</span></div>
                   <div className="flex justify-between text-sm text-gray-300">
                     <span>Labor {Number(selectedProduct.est_time) ? `(${Number(selectedProduct.est_time)}h × $${hourlyRate}/h)` : ''}</span>
                     <span>${laborCost.toFixed(2)}</span>
@@ -305,6 +313,9 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
                   )}
                   {selectedProduct.suggested_price && (
                     <p className="text-gray-400 text-xs pt-1">Template override in use: <strong className="text-white">${Number(selectedProduct.suggested_price).toFixed(2)}</strong></p>
+                  )}
+                  {hasLiveCost && (
+                    <p className="text-gray-500 text-xs pt-1">* material costs reflect current inventory prices</p>
                   )}
                 </div>
               </div>
