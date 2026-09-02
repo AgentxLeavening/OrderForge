@@ -9,6 +9,17 @@ type ClientOption = {
   name: string
 }
 
+export const CHANNEL_OPTIONS = [
+  { value: '', label: 'Not specified' },
+  { value: 'etsy', label: 'Etsy' },
+  { value: 'ebay', label: 'eBay' },
+  { value: 'shopify', label: 'Shopify' },
+  { value: 'direct', label: 'Direct / Website' },
+  { value: 'in_person', label: 'In-person / Market' },
+  { value: 'commission', label: 'Commission' },
+  { value: 'other', label: 'Other' },
+]
+
 type ProductItem = {
   id?: string
   name: string
@@ -35,6 +46,8 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
   const [title, setTitle] = useState('')
   const [type, setType] = useState('commission')
   const [selectedClientId, setSelectedClientId] = useState('')
+  const [salesChannel, setSalesChannel] = useState('')
+  const [buyerName, setBuyerName] = useState('')
   const [clients, setClients] = useState<ClientOption[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [selectedProductId, setSelectedProductId] = useState('')
@@ -101,6 +114,8 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
     const { data: createdOrder, error } = await supabase.from('orders').insert({
       user_id: userId,
       client_id: selectedClientId || null,
+      sales_channel: salesChannel || null,
+      buyer_name: buyerName.trim() || null,
       title,
       type,
       due_date: dueDate || null,
@@ -271,7 +286,31 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
           </div>
 
           <div>
-            <label className="text-sm text-gray-400 mb-1 block">Client</label>
+            <label className="text-sm text-gray-400 mb-1 block">Sales channel</label>
+            <select
+              value={salesChannel}
+              onChange={e => setSalesChannel(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-indigo-500"
+            >
+              {CHANNEL_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-sm text-gray-400 mb-1 block">Buyer / handle</label>
+            <input
+              type="text"
+              value={buyerName}
+              onChange={e => setBuyerName(e.target.value)}
+              placeholder="e.g. Etsy username (optional)"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          <div>
+            <label className="text-sm text-gray-400 mb-1 block">Client <span className="text-gray-600">(optional, for repeat/commission)</span></label>
             <select
               value={selectedClientId}
               onChange={e => setSelectedClientId(e.target.value)}

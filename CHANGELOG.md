@@ -3,6 +3,7 @@
 All notable changes to this project are documented in this file.
 
 ## Unreleased
+- Support one-off marketplace sales: add `sales_channel` and freeform `buyer_name` to orders (migration 009), surfaced in the new-order and order-detail forms so a sale doesn't require a client record. Invoices fall back to the buyer name when no client is set, and the dashboard adds a "Sales by Channel" breakdown that includes one-off/no-client orders.
 - Add `inventory_transactions` table and related migration (audit logging for inventory changes).
 - Wire inventory admin UI to insert `inventory_transactions` on create/update/delete.
 - Log `order_template_deduction` transactions when creating orders from product templates.

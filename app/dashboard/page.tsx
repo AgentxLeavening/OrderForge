@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, type MouseEvent } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import NewOrderModal from '@/app/components/NewOrderModal'
+import NewOrderModal, { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 import DashboardWidget from '@/app/components/DashboardWidget'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import Link from 'next/link'
@@ -31,11 +31,16 @@ type Order = {
   notes: string | null
   created_at: string
   client_id: string | null
+  sales_channel: string | null
+  buyer_name?: string | null
   clients?: {
     name: string
     id?: string
   }[] | null
 }
+
+const channelLabel = (value: string | null | undefined) =>
+  CHANNEL_OPTIONS.find(o => o.value === (value || ''))?.label ?? (value || 'Not specified')
 
 const COLUMNS = [
   { key: 'inquiry', label: 'Inquiry' },
@@ -60,6 +65,7 @@ export default function DashboardPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [clients, setClients] = useState<ClientOption[]>([])
   const [topRevenueClients, setTopRevenueClients] = useState<{ name: string; total: number }[]>([])
+  const [channelStats, setChannelStats] = useState<{ name: string; total: number; count: number }[]>([])
   const [invoiceCounts, setInvoiceCounts] = useState<{ name: string; count: number }[]>([])
   const [selectedClientId, setSelectedClientId] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
@@ -84,6 +90,7 @@ export default function DashboardPage() {
     const revenueByClient: Record<string, number> = {}
     const invoiceCountByClient: Record<string, number> = {}
 
+    const orderTotals: Record<string, number> = {}
     if (orderIds.length > 0) {
       const { data: items } = await supabase
         .from('order_items')
@@ -92,7 +99,6 @@ export default function DashboardPage() {
 
       const itemList = (items || []) as { order_id: string; quantity: number; unit_price: number }[]
 
-      const orderTotals: Record<string, number> = {}
       itemList.forEach(it => {
         const lineTotal = (Number(it.quantity) || 0) * (Number(it.unit_price) || 0)
         orderTotals[it.order_id] = (orderTotals[it.order_id] || 0) + lineTotal
@@ -107,6 +113,21 @@ export default function DashboardPage() {
         revenueByClient[clientName] = (revenueByClient[clientName] || 0) + amt
       })
     }
+
+    // Aggregate orders + revenue by sales channel — unlike the per-client
+    // breakdowns, this counts one-off / no-client sales too.
+    const channelAgg: Record<string, { total: number; count: number }> = {}
+    ordersData.forEach(o => {
+      const label = channelLabel(o.sales_channel)
+      if (!channelAgg[label]) channelAgg[label] = { total: 0, count: 0 }
+      channelAgg[label].total += orderTotals[o.id] || 0
+      channelAgg[label].count += 1
+    })
+    setChannelStats(
+      Object.entries(channelAgg)
+        .map(([name, v]) => ({ name, total: v.total, count: v.count }))
+        .sort((a, b) => b.total - a.total || b.count - a.count)
+    )
 
     // Use invoices table to compute invoice counts per client (one invoice may exist per order)
     const { data: invoices } = await supabase
@@ -331,6 +352,24 @@ export default function DashboardPage() {
             </ol>
           ) : (
             <p className="text-gray-400">No invoices in current view.</p>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-gray-200 font-semibold mb-3">Sales by Channel</h3>
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+          {channelStats.length > 0 ? (
+            <ol className="space-y-2">
+              {channelStats.map(c => (
+                <li key={c.name} className="flex items-center justify-between">
+                  <span className="text-white">{c.name}</span>
+                  <span className="text-gray-400 text-sm">{c.count} {c.count === 1 ? 'order' : 'orders'} · ${c.total.toFixed(2)}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="text-gray-400">No orders yet.</p>
           )}
         </div>
       </div>

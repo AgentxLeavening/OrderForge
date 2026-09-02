@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { generateInvoicePdf } from '@/lib/generateInvoicePdf'
+import { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 
 
 type Order = {
@@ -17,6 +18,8 @@ type Order = {
   notes: string | null
   created_at: string
   client_id: string | null
+  sales_channel: string | null
+  buyer_name: string | null
 }
 
 type LineItem = {
@@ -70,6 +73,8 @@ export default function OrderDetailPage() {
   const [type, setType] = useState('')
   const [status, setStatus] = useState('')
   const [clientId, setClientId] = useState('')
+  const [salesChannel, setSalesChannel] = useState('')
+  const [buyerName, setBuyerName] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
 
@@ -104,6 +109,8 @@ export default function OrderDetailPage() {
       setType(orderData.type)
       setStatus(orderData.status)
       setClientId(orderData.client_id || '')
+      setSalesChannel(orderData.sales_channel || '')
+      setBuyerName(orderData.buyer_name || '')
       setDueDate(orderData.due_date || '')
       setNotes(orderData.notes || '')
 
@@ -129,6 +136,8 @@ export default function OrderDetailPage() {
         type,
         status,
         client_id: clientId || null,
+        sales_channel: salesChannel || null,
+        buyer_name: buyerName.trim() || null,
         due_date: dueDate || null,
         notes,
         updated_at: new Date().toISOString(),
@@ -220,7 +229,7 @@ const handleGenerateInvoice = async () => {
     invoiceNumber,
     businessName: profile?.business_name || 'My Shop',
     ownerName: profile?.name || '',
-    clientName: clientData?.name || undefined,
+    clientName: clientData?.name || buyerName || undefined,
     clientEmail: clientData?.email || undefined,
     createdAt: new Date().toLocaleDateString(),
     dueDate: dueDate ? new Date(dueDate).toLocaleDateString() : undefined,
@@ -279,7 +288,31 @@ const handleGenerateInvoice = async () => {
             </div>
 
             <div>
-              <label className="text-sm text-gray-400 mb-1 block">Client</label>
+              <label className="text-sm text-gray-400 mb-1 block">Sales channel</label>
+              <select
+                value={salesChannel}
+                onChange={e => setSalesChannel(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500"
+              >
+                {CHANNEL_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm text-gray-400 mb-1 block">Buyer / handle</label>
+              <input
+                type="text"
+                value={buyerName}
+                onChange={e => setBuyerName(e.target.value)}
+                placeholder="e.g. Etsy username (optional)"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm text-gray-400 mb-1 block">Client <span className="text-gray-600">(optional)</span></label>
               <select
                 value={clientId}
                 onChange={e => setClientId(e.target.value)}

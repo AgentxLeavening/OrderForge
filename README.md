@@ -47,6 +47,7 @@ psql "<YOUR_DB_URL>" -f db/migrations/005_enable_rls_products.sql
 psql "<YOUR_DB_URL>" -f db/migrations/006_enable_rls_inventory.sql
 psql "<YOUR_DB_URL>" -f db/migrations/007_deduct_inventory_function.sql
 psql "<YOUR_DB_URL>" -f db/migrations/008_inventory_transactions_nullable_item.sql
+psql "<YOUR_DB_URL>" -f db/migrations/009_add_sales_channel_and_buyer_to_orders.sql
 ```
 
 Replace `<YOUR_DB_URL>` with your Supabase connection string (service role not required for these migrations, run as your DB owner).
