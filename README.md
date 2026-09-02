@@ -34,3 +34,19 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Database migrations
+
+This project uses SQL migrations in `db/migrations/`. After pulling changes that add or modify migrations, run them against your Supabase/Postgres database before starting the app.
+
+Example (psql):
+
+```bash
+psql "<YOUR_DB_URL>" -f db/migrations/004_create_inventory_transactions.sql
+psql "<YOUR_DB_URL>" -f db/migrations/005_enable_rls_products.sql
+```
+
+Replace `<YOUR_DB_URL>` with your Supabase connection string (service role not required for these migrations, run as your DB owner).
+
+If you prefer the Supabase SQL editor, copy/paste the contents of the migration files there and run them.
+
