@@ -146,6 +146,10 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
       status: 'inquiry',
       order_number: orderNumber,
       suggested_price: finalSuggestedPrice || null,
+      material_cost: selectedProduct ? Number(materialCost.toFixed(2)) : null,
+      labor_cost: selectedProduct ? Number(laborCost.toFixed(2)) : null,
+      markup: selectedProduct ? markup : null,
+      fee_pct: selectedProduct ? feePct : null,
     }).select('id').single()
 
     if (error) {

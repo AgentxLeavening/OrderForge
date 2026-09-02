@@ -20,6 +20,11 @@ type Order = {
   client_id: string | null
   sales_channel: string | null
   buyer_name: string | null
+  suggested_price: number | null
+  material_cost: number | null
+  labor_cost: number | null
+  markup: number | null
+  fee_pct: number | null
 }
 
 type LineItem = {
@@ -375,6 +380,34 @@ const handleGenerateInvoice = async () => {
             />
           </div>
         </div>
+
+        {/* Pricing & Margin (internal — from the suggested price basis) */}
+        {order && (order.suggested_price != null || order.material_cost != null) && (() => {
+          const price = Number(order.suggested_price) || 0
+          const material = Number(order.material_cost) || 0
+          const labor = Number(order.labor_cost) || 0
+          const cost = material + labor
+          const feeAmt = price * (Number(order.fee_pct) || 0) / 100
+          const profit = price - cost - feeAmt
+          const marginPct = price > 0 ? (profit / price) * 100 : 0
+          return (
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
+              <h2 className="text-white font-semibold mb-4">Pricing &amp; Margin</h2>
+              <div className="space-y-1.5 max-w-md">
+                <div className="flex justify-between text-sm text-gray-300"><span>Materials</span><span>${material.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-gray-300"><span>Labor</span><span>${labor.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-gray-400 border-t border-gray-800 pt-1.5"><span>Cost</span><span>${cost.toFixed(2)}</span></div>
+                {order.markup != null && <div className="flex justify-between text-sm text-gray-500"><span>Markup</span><span>×{Number(order.markup)}</span></div>}
+                {order.fee_pct != null && <div className="flex justify-between text-sm text-gray-500"><span>Marketplace fee ({Number(order.fee_pct)}%)</span><span>−${feeAmt.toFixed(2)}</span></div>}
+                <div className="flex justify-between text-sm text-gray-300 border-t border-gray-800 pt-1.5"><span>Suggested price</span><span className="text-white font-semibold">${price.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm border-t border-gray-800 pt-1.5">
+                  <span className="text-gray-300">Est. profit</span>
+                  <span className={profit >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>${profit.toFixed(2)} ({marginPct.toFixed(0)}%)</span>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Line Items */}
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
