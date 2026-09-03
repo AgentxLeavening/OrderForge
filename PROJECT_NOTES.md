@@ -56,22 +56,110 @@ The Supabase DB is remote and shared across machines — no seeding needed.
   line at the sale price (`description`, qty, per-unit `unit_price`) — NOT the BOM at cost.
 - Inventory is deducted per BOM item at creation via the `deduct_inventory_for_order` RPC
   (transactions logged with `reason = 'order_template_deduction'`).
-- Deleting an order restocks those materials (reverses the logged deductions,
-  logs `reason = 'order_deleted_restock'`), then removes the invoice + line items.
+- Deleting **or cancelling** an order restocks those materials — same idempotent
+  `restock_inventory_for_order` RPC (migration 015) either way, so cancel-then-delete
+  never double-credits. Cancelling keeps the order on record; delete removes it.
+- **Shipping is always a cost, only sometimes also revenue.** `orders.estimated_shipping`
+  + `orders.shipping_buyer_covered` (migration 020) feed the Pricing & Margin calc
+  (order detail page and the dashboard profit widget — kept in sync, same formula in both):
+  `cost = materials + labor + shipping` (always); `revenue = suggested_price +
+  (buyer covers it ? shipping : 0)`. So buyer-covered shipping is revenue-neutral (collected,
+  then spent on postage — a wash aside from the marketplace fee still applying to that
+  portion); seller-covered shipping comes straight out of profit. Get this wrong (e.g. add
+  shipping to revenue without also costing it) and imported orders' shipping/tax silently
+  reads as pure profit — a real bug hit and fixed this session.
+- `order_items.item_type` ('product'|'shipping') + `buyer_covered` (migration 019) — a
+  marketplace-imported order gets a synthetic "Shipping & tax" line so line items sum to
+  what was actually charged; unchecking "Buyer covered this" on that line excludes it from
+  the order detail page's billed total (`billableAmount()` helper).
 
 ## Current state (as of this session)
-Shipped to `main` and building/deployable:
-- Profit/margin on the dashboard (sourced from the persisted price breakdown).
-- Low-stock alerts (reorder thresholds + dashboard banner; migration 014).
-- Correct sale-price billing + order/line-item quantities.
-- Order deletion with automatic material restock.
-- Launch polish: entry redirect, branded metadata, dashboard-only nav + sign-out.
+Live and deployed:
+- Deployed to Vercel: **https://orderforge-eight.vercel.app** (auto-redeploys on push/merge
+  to `main`). Only `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY` are set there
+  so far — the marketplace integration env vars aren't, since that code isn't merged yet.
+- On `main`: Cancelled order status + shared restock RPC (was PR #7), forgot/reset password
+  (was PR #8), plus everything from before (profit/margin, low-stock alerts, sale-price
+  billing, launch polish).
+- **Supabase Site URL / Redirect URLs must include the Vercel domain** (Authentication →
+  URL Configuration) or password-reset emails link back to `localhost` instead — hit this
+  live, fixed by adding `https://orderforge-eight.vercel.app/**` alongside `localhost:3000/**`.
 `npm run build` passes; `npx tsc --noEmit` is clean.
+
+Uncommitted on top of `main` (this session's work, verified live, not yet pushed — see below):
+Auth architecture change + full Etsy marketplace integration.
+
+## Auth architecture (changed this session)
+Switched from a plain `@supabase/supabase-js` browser client (session in
+localStorage only) to `@supabase/ssr`: `lib/supabase.ts` now uses
+`createBrowserClient` (session in cookies), `lib/supabase/server.ts` has a
+cookie-reading server client for Route Handlers/Server Components, and
+`proxy.ts` (Next 16 renamed `middleware.ts` → `proxy.ts` — see AGENTS.md)
+refreshes the session cookie on `/dashboard/*` and `/api/integrations/*`.
+This was required so server-side OAuth callback routes can identify the
+signed-in user. **One-time consequence: existing logged-in sessions don't
+carry over** — everyone (including you) has to log in again once.
+`lib/supabase/admin.ts` adds a service-role client for tables the user's own
+session must never read (see marketplace_connections below);
+`SUPABASE_SERVICE_ROLE_KEY` must be set for it to work.
+
+## Marketplace integrations (Etsy/eBay)
+Goal: pull a seller's Etsy/eBay orders in automatically. Per-provider code in
+`lib/integrations/{etsy,ebay}.ts` implementing a shared `MarketplaceProvider`
+interface (`lib/integrations/types.ts`); OAuth + sync Route Handlers live at
+`app/api/integrations/<provider>/{connect,callback,sync,disconnect}` (thin
+wrappers around `lib/integrations/routeHelpers.ts`); shared import/update
+logic in `lib/integrations/sync.ts`; UI in the Settings page ("Marketplace
+connections" section).
+
+**Etsy: fully live-tested end-to-end against a real approved app** (2026-09-03)
+— connect, token exchange, shop lookup, order import, shipping/tax
+reconciliation, idempotent re-sync, and change-detection updates all
+confirmed working against real data. Corrections made from what live testing
+actually showed (training knowledge was wrong on these specifics):
+- Every `v3/application/*` call needs `x-api-key: <keystring>:<shared_secret>`
+  (colon-joined) — plain Keystring alone 403s. `ETSY_SHARED_SECRET` required.
+- Etsy's receipts endpoint filters by **creation** date, not last-modified —
+  so `fetchOrdersSince` deliberately ignores the sync cursor and re-checks the
+  most recent 100 receipts every time; `sync.ts` skips anything unchanged, so
+  this costs an extra API call, not writes.
+- Real receipt money fields (confirmed against a live receipt): `subtotal`
+  (item revenue only) + `total_shipping_cost` + `total_tax_cost` +
+  `total_vat_cost` + `gift_wrap_price` − `discount_amt` = `grandtotal`,
+  exactly. Import writes `subtotal` to `suggested_price` and the rest to
+  `estimated_shipping` — **not** the combined grandtotal (that was the bug
+  described above; got it wrong on the first pass, fixed after real numbers
+  showed shipping reading as pure profit).
+
+**eBay: still unverified** — same shape/pattern as Etsy but no eBay
+credentials tested yet. Field names (`pricingSummary`, `lineItemCost`,
+`orderFulfillmentStatus`) and the `x-api-key`-style quirk possibly not
+applying are all flagged inline as needing a live check once credentials exist.
+
+- `marketplace_connections` (migration 016) holds OAuth tokens — RLS enabled
+  with **no policies**, so it's reachable only via the service-role client,
+  never the user's own session.
+- `orders.external_source`/`external_order_id` (migrations 017+018) make
+  imports idempotent — re-syncing never duplicates an order. 018 fixes 017's
+  unique index (had to be a real constraint, not a partial one, for
+  PostgREST's `upsert(..., { onConflict, ignoreDuplicates: true })` to target it).
+- Re-sync **does** pick up status/price changes on already-imported orders
+  (compares stored vs. fetched, updates order-level fields only) but
+  deliberately never touches line items on an update — those can be manually
+  edited (the quantity editor), so a re-sync must not risk clobbering that.
+- New env vars documented inline in `.env.local`: `ETSY_CLIENT_ID`,
+  `ETSY_REDIRECT_URI`, `ETSY_SHARED_SECRET`, `EBAY_CLIENT_ID`,
+  `EBAY_CLIENT_SECRET`, `EBAY_REDIRECT_URI`, `EBAY_ENV`,
+  `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_APP_URL`.
 
 ## Known debt / follow-ups
 - Pre-existing ESLint errors (`no-explicit-any`, some react-hooks rules) — **non-blocking**,
   the Turbopack build does not fail on them.
-- No server-side auth middleware (client-side redirects only).
 - One historical order `ORD-880512` has a `suggested_price` ($15) but no line item —
   add it by hand on the order page if you want its revenue/invoice to reflect $15.
-- Candidate next features: CSV / tax export; a "Cancelled" order status (complements delete).
+- eBay side of the marketplace integration is unverified (see above) — needs a
+  registered eBay app + live test pass before relying on it.
+- Marketplace sync is manual ("Sync now" button) — no scheduled/background sync yet.
+- Auth/marketplace-integration work above is still uncommitted on top of `main` locally —
+  commit + push + PR it (see git history / ask for the commands) before it's at risk of
+  being lost, and before Vercel/Supabase get the new env vars it needs to actually run there.

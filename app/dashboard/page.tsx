@@ -46,6 +46,8 @@ type Order = {
   material_cost?: number | null
   labor_cost?: number | null
   fee_pct?: number | null
+  estimated_shipping?: number | null
+  shipping_buyer_covered?: boolean
   clients?: {
     name: string
     id?: string
@@ -299,18 +301,25 @@ export default function DashboardPage() {
       .map(([clientId, v]) => ({ clientId, name: v.name, count: v.count }))
   })()
   // Profit / margin economics from the persisted pricing breakdown. This mirrors
-  // the order-detail "Pricing & Margin" definition (revenue = suggested price,
-  // cost = materials + labor, fee applies to the price) rather than the
-  // order_items line totals, whose unit_price is the cost basis for
-  // template-created orders and so would understate revenue.
+  // the order-detail "Pricing & Margin" definition: shipping is always a real
+  // cost (materials + labor + shipping), and only ever revenue when the buyer
+  // covers it — so buyer-covered shipping is roughly a wash on profit
+  // (collected, then spent), aside from the marketplace fee still applying to
+  // that portion; seller-covered shipping is pure cost with no offsetting
+  // revenue. This is computed from persisted fields rather than order_items
+  // line totals, whose unit_price is the cost basis for template-created
+  // orders and so would understate revenue.
   const pricedOrders = filteredOrders
     .filter(o => o.status !== 'cancelled')
     .map(o => {
       if (o.suggested_price == null && o.material_cost == null) return null
       const price = Number(o.suggested_price) || 0
-      const cost = (Number(o.material_cost) || 0) + (Number(o.labor_cost) || 0)
-      const feeAmt = price * (Number(o.fee_pct) || 0) / 100
-      return { order: o, price, cost, feeAmt, profit: price - cost - feeAmt }
+      const shipping = Number(o.estimated_shipping) || 0
+      const buyerCoversShipping = o.shipping_buyer_covered !== false
+      const cost = (Number(o.material_cost) || 0) + (Number(o.labor_cost) || 0) + shipping
+      const revenue = price + (buyerCoversShipping ? shipping : 0)
+      const feeAmt = revenue * (Number(o.fee_pct) || 0) / 100
+      return { order: o, price: revenue, cost, feeAmt, profit: revenue - cost - feeAmt }
     })
     .filter((e): e is NonNullable<typeof e> => e !== null)
 
