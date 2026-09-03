@@ -41,6 +41,7 @@ function tokenSetFromResponse(json: any): TokenSet {
 
 export const ebayProvider: MarketplaceProvider = {
   id: 'ebay',
+  label: 'eBay',
 
   buildAuthorizeUrl({ state }) {
     requireEnv()

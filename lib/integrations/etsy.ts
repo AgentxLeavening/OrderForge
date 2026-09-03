@@ -49,6 +49,7 @@ function etsyUserIdFromToken(accessToken: string): string {
 
 export const etsyProvider: MarketplaceProvider = {
   id: 'etsy',
+  label: 'Etsy',
 
   buildAuthorizeUrl({ state, codeChallenge }) {
     requireEnv()

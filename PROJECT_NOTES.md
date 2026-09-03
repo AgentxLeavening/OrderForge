@@ -112,14 +112,25 @@ carry over** — everyone (including you) has to log in again once.
 session must never read (see marketplace_connections below);
 `SUPABASE_SERVICE_ROLE_KEY` must be set for it to work.
 
-## Marketplace integrations (Etsy/eBay)
-Goal: pull a seller's Etsy/eBay orders in automatically. Per-provider code in
-`lib/integrations/{etsy,ebay}.ts` implementing a shared `MarketplaceProvider`
-interface (`lib/integrations/types.ts`); OAuth + sync Route Handlers live at
+## Marketplace integrations (Etsy/eBay/Shopify/TikTok Shop/Facebook)
+Goal: pull a seller's marketplace orders in automatically. Per-provider code in
+`lib/integrations/{etsy,ebay,shopify,tiktok,facebook}.ts` implementing a shared
+`MarketplaceProvider` interface (`lib/integrations/types.ts` — `id`, `label`,
+plus the OAuth/fetch methods); OAuth + sync Route Handlers live at
 `app/api/integrations/<provider>/{connect,callback,sync,disconnect}` (thin
 wrappers around `lib/integrations/routeHelpers.ts`); shared import/update
 logic in `lib/integrations/sync.ts`; UI in the Settings page ("Marketplace
-connections" section).
+connections" section) — `marketplace_connections.provider` check constraint
+(migration 021) allows all five.
+
+**Shopify is architecturally different from the others**: there's no single
+global authorize URL — every OAuth request is scoped to a specific
+`<store>.myshopify.com` domain, which the seller has to type into a box in
+Settings *before* clicking Connect (`?shop=` on the connect route, threaded
+through a short-lived cookie to the callback, same as the PKCE state/verifier
+cookies). `MarketplaceProvider.buildAuthorizeUrl`/`exchangeCodeForToken` take
+an optional `shopDomain` for this; every other provider ignores it. Shopify's
+offline access tokens don't expire and have no refresh flow.
 
 **Etsy: fully live-tested end-to-end against a real approved app** (2026-09-03)
 — connect, token exchange, shop lookup, order import, shipping/tax
@@ -140,14 +151,32 @@ actually showed (training knowledge was wrong on these specifics):
   described above; got it wrong on the first pass, fixed after real numbers
   showed shipping reading as pure profit).
 
-**eBay: still unverified** — same shape/pattern as Etsy but no eBay
-credentials tested yet. Field names (`pricingSummary`, `lineItemCost`,
-`orderFulfillmentStatus`) and the `x-api-key`-style quirk possibly not
-applying are all flagged inline as needing a live check once credentials exist.
+**eBay, Shopify, TikTok Shop, Facebook & Instagram Shop: all unverified** —
+same shared pattern as Etsy but no credentials tested for any of them yet.
+Confidence varies a lot by provider:
+- **eBay**: closest to Etsy's shape (bearer-token API). Field names
+  (`pricingSummary`, `lineItemCost`, `orderFulfillmentStatus`) and whether
+  Etsy's `x-api-key`-style quirk applies here too are unverified.
+- **Shopify**: standard, well-documented OAuth; the shop-domain-first flow
+  (above) is the main untested piece, along with `orders.json` field names.
+  Lowest-risk of the four to verify once you have a store to test against —
+  no approval wait, you can generate credentials yourself.
+- **TikTok Shop**: HEAVILY unverified — every API call needs a request
+  signature (HMAC-SHA256 over the app secret; see `lib/integrations/tiktok.ts`
+  `signRequest`), not just OAuth. The exact canonicalization, endpoint
+  versions, and even the authorize/token URLs are a best-effort
+  reconstruction, more likely to need real correction than anything else here.
+- **Facebook & Instagram Shop**: HEAVILY unverified — two independent risks.
+  The commerce permissions this needs typically require a formal Meta App
+  Review before they work for anyone but the app's own admins/testers
+  (separate from whether the code is right), and there's no single "shop ID"
+  handed back after OAuth — `fetchShopInfo` has to discover a Commerce
+  Account through Business Manager, which is a real simplification
+  (first business, first commerce account) for anyone with more than one.
 
-- `marketplace_connections` (migration 016) holds OAuth tokens — RLS enabled
-  with **no policies**, so it's reachable only via the service-role client,
-  never the user's own session.
+- `marketplace_connections` (migration 016, provider list widened in 021)
+  holds OAuth tokens — RLS enabled with **no policies**, so it's reachable
+  only via the service-role client, never the user's own session.
 - `orders.external_source`/`external_order_id` (migrations 017+018) make
   imports idempotent — re-syncing never duplicates an order. 018 fixes 017's
   unique index (had to be a real constraint, not a partial one, for
@@ -159,13 +188,21 @@ applying are all flagged inline as needing a live check once credentials exist.
 - New env vars documented inline in `.env.local`: `ETSY_CLIENT_ID`,
   `ETSY_REDIRECT_URI`, `ETSY_SHARED_SECRET`, `EBAY_CLIENT_ID`,
   `EBAY_CLIENT_SECRET`, `EBAY_REDIRECT_URI`, `EBAY_ENV`,
-  `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_APP_URL`.
+  `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_REDIRECT_URI`,
+  `TIKTOK_APP_KEY`, `TIKTOK_APP_SECRET`, `TIKTOK_REDIRECT_URI`,
+  `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET`, `FACEBOOK_REDIRECT_URI`,
+  `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_APP_URL`. **Every Vercel env var
+  needs its actual value double-checked individually when wiring a new
+  provider up there** — see the "All Vercel env vars must be set explicitly"
+  note above; this bit Etsy's rollout on five separate variables.
 
 ## Known debt / follow-ups
 - Pre-existing ESLint errors (`no-explicit-any`, some react-hooks rules) — **non-blocking**,
   the Turbopack build does not fail on them.
 - One historical order `ORD-880512` has a `suggested_price` ($15) but no line item —
   add it by hand on the order page if you want its revenue/invoice to reflect $15.
-- eBay side of the marketplace integration is unverified (see above) — needs a
-  registered eBay app + live test pass before relying on it.
+- eBay/Shopify/TikTok Shop/Facebook are all unverified (see above) — each
+  needs a registered app + live test pass, same as Etsy went through, before
+  relying on it. Shopify is the quickest to unblock (self-service
+  credentials, no approval wait).
 - Marketplace sync is manual ("Sync now" button) — no scheduled/background sync yet.

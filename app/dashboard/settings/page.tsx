@@ -3,14 +3,23 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
+type ProviderId = 'etsy' | 'ebay' | 'shopify' | 'tiktok' | 'facebook'
+
 type Connection = {
-  provider: 'etsy' | 'ebay'
+  provider: ProviderId
   external_shop_name: string | null
   last_synced_at: string | null
   last_sync_error: string | null
 }
 
-const PROVIDER_LABELS: Record<string, string> = { etsy: 'Etsy', ebay: 'eBay' }
+const ALL_PROVIDERS: ProviderId[] = ['etsy', 'ebay', 'shopify', 'tiktok', 'facebook']
+const PROVIDER_LABELS: Record<string, string> = {
+  etsy: 'Etsy',
+  ebay: 'eBay',
+  shopify: 'Shopify',
+  tiktok: 'TikTok Shop',
+  facebook: 'Facebook & Instagram Shop',
+}
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
@@ -27,6 +36,7 @@ export default function SettingsPage() {
   const [connectionsLoading, setConnectionsLoading] = useState(true)
   const [syncingProvider, setSyncingProvider] = useState<string | null>(null)
   const [connectNotice, setConnectNotice] = useState<{ provider: string; status: string } | null>(null)
+  const [shopifyDomain, setShopifyDomain] = useState('')
 
   const loadConnections = async () => {
     setConnectionsLoading(true)
@@ -63,9 +73,9 @@ export default function SettingsPage() {
     load()
     loadConnections()
 
-    // Etsy/eBay redirect back here with ?etsy=connected or ?ebay=error etc.
+    // Marketplace OAuth redirects back here with ?etsy=connected or ?ebay=error etc.
     const params = new URLSearchParams(window.location.search)
-    for (const provider of ['etsy', 'ebay']) {
+    for (const provider of ALL_PROVIDERS) {
       const status = params.get(provider)
       if (status) {
         setConnectNotice({ provider, status })
@@ -192,8 +202,40 @@ export default function SettingsPage() {
             <p className="text-gray-500 text-sm">Loading…</p>
           ) : (
             <div className="space-y-3">
-              {(['etsy', 'ebay'] as const).map(provider => {
+              {ALL_PROVIDERS.map(provider => {
                 const conn = connections.find(c => c.provider === provider)
+                const isShopify = provider === 'shopify'
+
+                // Shopify has no single global authorize URL — it needs a
+                // shop domain up front, so its "not connected" row gets an
+                // extra input instead of a plain Connect button.
+                if (isShopify && !conn) {
+                  return (
+                    <div key={provider} className="bg-gray-800 rounded-lg px-4 py-3">
+                      <div className="flex items-center justify-between flex-wrap gap-3">
+                        <div>
+                          <span className="text-white font-medium">{PROVIDER_LABELS[provider]}</span>
+                          <p className="text-gray-500 text-xs mt-0.5">Not connected</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={shopifyDomain}
+                            onChange={e => setShopifyDomain(e.target.value)}
+                            placeholder="your-store.myshopify.com"
+                            className="text-sm bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 w-56"
+                          />
+                          <a
+                            href={shopifyDomain.trim() ? `/api/integrations/shopify/connect?shop=${encodeURIComponent(shopifyDomain.trim())}` : undefined}
+                            className={`text-sm px-3 py-1.5 rounded ${shopifyDomain.trim() ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-gray-700 text-gray-500 cursor-not-allowed pointer-events-none'}`}
+                          >
+                            Connect Shopify
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }
+
                 return (
                   <div key={provider} className="flex items-center justify-between bg-gray-800 rounded-lg px-4 py-3">
                     <div>

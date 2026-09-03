@@ -11,6 +11,7 @@ import type { MarketplaceProvider } from './types'
 const appUrl = () => process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 const stateCookie = (id: string) => `${id}_oauth_state`
 const verifierCookie = (id: string) => `${id}_oauth_verifier`
+const shopCookie = (id: string) => `${id}_oauth_shop`
 
 async function requireUser() {
   const supabase = await createSupabaseServerClient()
@@ -19,19 +20,23 @@ async function requireUser() {
 }
 
 // GET /api/integrations/<provider>/connect — redirects to the provider's
-// authorize page. Etsy uses the PKCE pair; eBay's provider module just
-// ignores codeChallenge/codeVerifier, so generating them unconditionally
-// here keeps this one code path shared.
-export async function handleConnect(provider: MarketplaceProvider) {
+// authorize page. Etsy uses the PKCE pair; other providers' modules just
+// ignore codeChallenge/codeVerifier, so generating them unconditionally
+// here keeps this one code path shared. Shopify additionally needs a shop
+// domain up front (?shop=<store>.myshopify.com on this route, from a text
+// input on the Settings page) — every other provider ignores it.
+export async function handleConnect(provider: MarketplaceProvider, request: NextRequest) {
   const user = await requireUser()
   if (!user) return NextResponse.redirect(new URL('/login', appUrl()))
+
+  const shopDomain = new URL(request.url).searchParams.get('shop') || undefined
 
   const state = generateState()
   const { codeVerifier, codeChallenge } = generatePkcePair()
 
   let authorizeUrl: string
   try {
-    authorizeUrl = provider.buildAuthorizeUrl({ state, codeChallenge })
+    authorizeUrl = provider.buildAuthorizeUrl({ state, codeChallenge, shopDomain })
   } catch (e) {
     console.warn(`${provider.id} connect failed`, e)
     return NextResponse.redirect(new URL(`/dashboard/settings?${provider.id}=not_configured`, appUrl()))
@@ -41,6 +46,7 @@ export async function handleConnect(provider: MarketplaceProvider) {
   const cookieOpts = { httpOnly: true, secure: true, sameSite: 'lax' as const, maxAge: 600, path: '/' }
   res.cookies.set(stateCookie(provider.id), state, cookieOpts)
   res.cookies.set(verifierCookie(provider.id), codeVerifier, cookieOpts)
+  if (shopDomain) res.cookies.set(shopCookie(provider.id), shopDomain, cookieOpts)
   return res
 }
 
@@ -57,13 +63,14 @@ export async function handleCallback(provider: MarketplaceProvider, request: Nex
   const state = url.searchParams.get('state')
   const expectedState = request.cookies.get(stateCookie(provider.id))?.value
   const codeVerifier = request.cookies.get(verifierCookie(provider.id))?.value
+  const shopDomain = request.cookies.get(shopCookie(provider.id))?.value
 
   if (!code || !state || !expectedState || state !== expectedState) {
     return NextResponse.redirect(settingsUrl('error'))
   }
 
   try {
-    const tokens = await provider.exchangeCodeForToken({ code, codeVerifier })
+    const tokens = await provider.exchangeCodeForToken({ code, codeVerifier, shopDomain })
     const admin = createSupabaseAdminClient()
     const { error } = await admin.from('marketplace_connections').upsert(
       {
@@ -73,6 +80,10 @@ export async function handleCallback(provider: MarketplaceProvider, request: Nex
         refresh_token: tokens.refreshToken,
         expires_at: tokens.expiresAt,
         scope: tokens.scope ?? null,
+        // Providers that already know their shop identity at token-exchange
+        // time (Shopify) populate these directly, skipping sync.ts's lazy
+        // fetchShopInfo resolution on first sync.
+        ...(tokens.shopId ? { external_shop_id: tokens.shopId, external_shop_name: tokens.shopName ?? null } : {}),
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'user_id,provider' }
@@ -82,6 +93,7 @@ export async function handleCallback(provider: MarketplaceProvider, request: Nex
     const res = NextResponse.redirect(settingsUrl('connected'))
     res.cookies.delete(stateCookie(provider.id))
     res.cookies.delete(verifierCookie(provider.id))
+    res.cookies.delete(shopCookie(provider.id))
     return res
   } catch (e) {
     console.warn(`${provider.id} OAuth callback failed`, e)

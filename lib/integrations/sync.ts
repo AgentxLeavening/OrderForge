@@ -71,7 +71,7 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
           .from('orders')
           .insert({
             user_id: userId,
-            title: `${provider.id === 'etsy' ? 'Etsy' : 'eBay'} order ${o.externalOrderId}`,
+            title: `${provider.label} order ${o.externalOrderId}`,
             type: 'other',
             status: o.status,
             order_number: orderNumber,
@@ -105,8 +105,8 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
         continue
       }
 
-      // Already imported — only touch order-level fields Etsy/eBay actually
-      // owns, and only if something changed. Line items are deliberately
+      // Already imported — only touch order-level fields the marketplace
+      // actually owns, and only if something changed. Line items are deliberately
       // left alone here: they can be manually edited on any order (the
       // quantity editor), and blindly replacing them on every re-sync would
       // risk silently wiping a manual edit.
