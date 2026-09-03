@@ -3,6 +3,15 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
+type Connection = {
+  provider: 'etsy' | 'ebay'
+  external_shop_name: string | null
+  last_synced_at: string | null
+  last_sync_error: string | null
+}
+
+const PROVIDER_LABELS: Record<string, string> = { etsy: 'Etsy', ebay: 'eBay' }
+
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -13,6 +22,25 @@ export default function SettingsPage() {
   const [markup, setMarkup] = useState('')
   const [feePct, setFeePct] = useState('')
   const [taxRate, setTaxRate] = useState('')
+
+  const [connections, setConnections] = useState<Connection[]>([])
+  const [connectionsLoading, setConnectionsLoading] = useState(true)
+  const [syncingProvider, setSyncingProvider] = useState<string | null>(null)
+  const [connectNotice, setConnectNotice] = useState<{ provider: string; status: string } | null>(null)
+
+  const loadConnections = async () => {
+    setConnectionsLoading(true)
+    try {
+      const res = await fetch('/api/integrations/status')
+      if (res.ok) {
+        const json = await res.json()
+        setConnections(json.connections || [])
+      }
+    } catch (e) {
+      console.warn('Failed loading connection status', e)
+    }
+    setConnectionsLoading(false)
+  }
 
   useEffect(() => {
     const load = async () => {
@@ -33,7 +61,44 @@ export default function SettingsPage() {
       setLoading(false)
     }
     load()
+    loadConnections()
+
+    // Etsy/eBay redirect back here with ?etsy=connected or ?ebay=error etc.
+    const params = new URLSearchParams(window.location.search)
+    for (const provider of ['etsy', 'ebay']) {
+      const status = params.get(provider)
+      if (status) {
+        setConnectNotice({ provider, status })
+        window.history.replaceState(null, '', '/dashboard/settings')
+        break
+      }
+    }
   }, [])
+
+  const syncNow = async (provider: string) => {
+    setSyncingProvider(provider)
+    try {
+      const res = await fetch(`/api/integrations/${provider}/sync`, { method: 'POST' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Sync failed')
+      setConnectNotice({ provider, status: `synced:${json.imported}:${json.updated ?? 0}` })
+    } catch (e) {
+      console.warn(`Failed syncing ${provider}`, e)
+      setConnectNotice({ provider, status: 'sync_error' })
+    }
+    setSyncingProvider(null)
+    await loadConnections()
+  }
+
+  const disconnect = async (provider: string) => {
+    if (!confirm(`Disconnect ${PROVIDER_LABELS[provider]}? You can reconnect any time.`)) return
+    try {
+      await fetch(`/api/integrations/${provider}/disconnect`, { method: 'POST' })
+    } catch (e) {
+      console.warn(`Failed disconnecting ${provider}`, e)
+    }
+    await loadConnections()
+  }
 
   const save = async () => {
     setSaving(true)
@@ -103,6 +168,72 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mt-6">
+          <h2 className="text-white font-semibold mb-1">Marketplace connections</h2>
+          <p className="text-gray-500 text-xs mb-4">Connect a shop to pull its sales in as orders automatically.</p>
+
+          {connectNotice && (
+            <div className={`text-sm px-4 py-2.5 rounded-lg mb-4 ${connectNotice.status.startsWith('sync') && !connectNotice.status.includes('error') ? 'bg-green-500/10 border border-green-500/20 text-green-400' : connectNotice.status === 'connected' ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>
+              {connectNotice.status === 'connected' && `${PROVIDER_LABELS[connectNotice.provider]} connected.`}
+              {connectNotice.status === 'not_configured' && `${PROVIDER_LABELS[connectNotice.provider]} isn't set up yet — missing API credentials.`}
+              {connectNotice.status === 'error' && `Couldn't connect ${PROVIDER_LABELS[connectNotice.provider]}. Try again.`}
+              {connectNotice.status === 'sync_error' && `Sync failed for ${PROVIDER_LABELS[connectNotice.provider]}.`}
+              {connectNotice.status.startsWith('synced:') && (() => {
+                const [, imported, updated] = connectNotice.status.split(':')
+                const parts = [`${imported} new order(s)`]
+                if (Number(updated) > 0) parts.push(`${updated} updated`)
+                return `${parts.join(', ')} from ${PROVIDER_LABELS[connectNotice.provider]}.`
+              })()}
+            </div>
+          )}
+
+          {connectionsLoading ? (
+            <p className="text-gray-500 text-sm">Loading…</p>
+          ) : (
+            <div className="space-y-3">
+              {(['etsy', 'ebay'] as const).map(provider => {
+                const conn = connections.find(c => c.provider === provider)
+                return (
+                  <div key={provider} className="flex items-center justify-between bg-gray-800 rounded-lg px-4 py-3">
+                    <div>
+                      <span className="text-white font-medium">{PROVIDER_LABELS[provider]}</span>
+                      {conn ? (
+                        <p className="text-gray-500 text-xs mt-0.5">
+                          {conn.external_shop_name ? `${conn.external_shop_name} · ` : ''}
+                          {conn.last_synced_at ? `Last synced ${new Date(conn.last_synced_at).toLocaleString()}` : 'Never synced'}
+                          {conn.last_sync_error ? <span className="text-red-400"> · last sync failed</span> : null}
+                        </p>
+                      ) : (
+                        <p className="text-gray-500 text-xs mt-0.5">Not connected</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {conn ? (
+                        <>
+                          <button
+                            onClick={() => syncNow(provider)}
+                            disabled={syncingProvider === provider}
+                            className="text-sm bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded disabled:opacity-50"
+                          >
+                            {syncingProvider === provider ? 'Syncing…' : 'Sync now'}
+                          </button>
+                          <button onClick={() => disconnect(provider)} className="text-sm text-red-500 hover:text-red-400 px-2">
+                            Disconnect
+                          </button>
+                        </>
+                      ) : (
+                        <a href={`/api/integrations/${provider}/connect`} className="text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded">
+                          Connect {PROVIDER_LABELS[provider]}
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

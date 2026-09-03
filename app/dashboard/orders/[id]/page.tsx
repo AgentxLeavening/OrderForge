@@ -25,6 +25,8 @@ type Order = {
   labor_cost: number | null
   markup: number | null
   fee_pct: number | null
+  estimated_shipping: number | null
+  shipping_buyer_covered: boolean
 }
 
 type LineItem = {
@@ -32,6 +34,8 @@ type LineItem = {
   description: string
   quantity: number
   unit_price: number
+  item_type?: 'product' | 'shipping'
+  buyer_covered?: boolean
 }
 
 type ClientOption = {
@@ -66,6 +70,12 @@ const STATUS_COLORS: Record<string, string> = {
 const channelLabel = (value: string | null | undefined) =>
   CHANNEL_OPTIONS.find(o => o.value === (value || ''))?.label ?? (value || '')
 
+// A shipping/tax line marked "not buyer covered" was reported by the
+// marketplace as part of the total but the seller says they ate the cost —
+// exclude it from what's actually billed/counted as revenue.
+const billableAmount = (item: LineItem) =>
+  item.item_type === 'shipping' && item.buyer_covered === false ? 0 : item.quantity * item.unit_price
+
 export default function OrderDetailPage() {
   const router = useRouter()
   const params = useParams()
@@ -88,6 +98,8 @@ export default function OrderDetailPage() {
   const [buyerName, setBuyerName] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
+  const [estimatedShipping, setEstimatedShipping] = useState('')
+  const [shippingBuyerCovered, setShippingBuyerCovered] = useState(true)
 
   // New line item
   const [newDesc, setNewDesc] = useState('')
@@ -124,6 +136,8 @@ export default function OrderDetailPage() {
       setBuyerName(orderData.buyer_name || '')
       setDueDate(orderData.due_date || '')
       setNotes(orderData.notes || '')
+      setEstimatedShipping(orderData.estimated_shipping == null ? '' : String(orderData.estimated_shipping))
+      setShippingBuyerCovered(orderData.shipping_buyer_covered !== false)
 
       const { data: items } = await supabase
         .from('order_items')
@@ -151,6 +165,8 @@ export default function OrderDetailPage() {
         buyer_name: buyerName.trim() || null,
         due_date: dueDate || null,
         notes,
+        estimated_shipping: estimatedShipping.trim() === '' ? null : Number(estimatedShipping),
+        shipping_buyer_covered: shippingBuyerCovered,
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -207,6 +223,15 @@ export default function OrderDetailPage() {
     await supabase.from('order_items').update({ quantity: qty }).eq('id', itemId)
   }
 
+  // Shipping/tax lines from a marketplace import default to "buyer covered"
+  // (the marketplace's total, by construction, is what the buyer paid) —
+  // this lets the seller uncheck it if that's wrong for this order, which
+  // excludes the line from the billed total (see billableAmount above).
+  const toggleBuyerCovered = async (itemId: string, value: boolean) => {
+    setLineItems(prev => prev.map(i => (i.id === itemId ? { ...i, buyer_covered: value } : i)))
+    await supabase.from('order_items').update({ buyer_covered: value }).eq('id', itemId)
+  }
+
   // Delete an order (e.g. cancelled before work started). Restocks any materials
   // this order deducted, then removes its invoice + line items and the order
   // itself. inventory_transactions.order_id is ON DELETE SET NULL, so the audit
@@ -250,7 +275,7 @@ export default function OrderDetailPage() {
     }
   }
 
-  const total = lineItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
+  const total = lineItems.reduce((sum, item) => sum + billableAmount(item), 0)
 
   if (loading) {
     return (
@@ -278,7 +303,7 @@ const handleGenerateInvoice = async () => {
     : { data: null }
 
   const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`
-  const subtotal = lineItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
+  const subtotal = lineItems.reduce((sum, item) => sum + billableAmount(item), 0)
   const taxRate = profile?.default_tax_rate || 0
   const taxAmount = subtotal * (taxRate / 100)
   const total = subtotal + taxAmount
@@ -464,24 +489,65 @@ const handleGenerateInvoice = async () => {
           const price = Number(order.suggested_price) || 0
           const material = Number(order.material_cost) || 0
           const labor = Number(order.labor_cost) || 0
-          const cost = material + labor
-          const feeAmt = price * (Number(order.fee_pct) || 0) / 100
-          const profit = price - cost - feeAmt
-          const marginPct = price > 0 ? (profit / price) * 100 : 0
+          const shipping = Number(estimatedShipping) || 0
+          // Shipping is always a real cost (you pay for postage either way).
+          // It's only ever added to revenue when the buyer covers it — which
+          // makes it a wash on profit (collected, then spent). When you cover
+          // it instead, it's a cost with no offsetting revenue, so it comes
+          // straight out of profit. The marketplace fee applies to whatever
+          // revenue includes, same as the rest of the sale.
+          const cost = material + labor + shipping
+          const revenue = price + (shippingBuyerCovered ? shipping : 0)
+          const feeAmt = revenue * (Number(order.fee_pct) || 0) / 100
+          const profit = revenue - cost - feeAmt
+          const marginPct = revenue > 0 ? (profit / revenue) * 100 : 0
           return (
             <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
               <h2 className="text-white font-semibold mb-4">Pricing &amp; Margin</h2>
               <div className="space-y-1.5 max-w-md">
                 <div className="flex justify-between text-sm text-gray-300"><span>Materials</span><span>${material.toFixed(2)}</span></div>
                 <div className="flex justify-between text-sm text-gray-300"><span>Labor</span><span>${labor.toFixed(2)}</span></div>
+                {shipping > 0 && (
+                  <div className="flex justify-between text-sm text-gray-300"><span>Shipping</span><span>${shipping.toFixed(2)}</span></div>
+                )}
                 <div className="flex justify-between text-sm text-gray-400 border-t border-gray-800 pt-1.5"><span>Cost</span><span>${cost.toFixed(2)}</span></div>
                 {order.markup != null && <div className="flex justify-between text-sm text-gray-500"><span>Markup</span><span>×{Number(order.markup)}</span></div>}
                 {order.fee_pct != null && <div className="flex justify-between text-sm text-gray-500"><span>Marketplace fee ({Number(order.fee_pct)}%)</span><span>−${feeAmt.toFixed(2)}</span></div>}
-                <div className="flex justify-between text-sm text-gray-300 border-t border-gray-800 pt-1.5"><span>Suggested price</span><span className="text-white font-semibold">${price.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm text-gray-300 border-t border-gray-800 pt-1.5"><span>Suggested price</span><span className="text-white">${price.toFixed(2)}</span></div>
+                {shippingBuyerCovered && shipping > 0 && (
+                  <div className="flex justify-between text-sm text-gray-300"><span>+ Shipping (buyer paying)</span><span>${shipping.toFixed(2)}</span></div>
+                )}
+                <div className="flex justify-between text-sm text-gray-300 border-t border-gray-800 pt-1.5"><span>Total revenue</span><span className="text-white font-semibold">${revenue.toFixed(2)}</span></div>
                 <div className="flex justify-between text-sm border-t border-gray-800 pt-1.5">
                   <span className="text-gray-300">Est. profit</span>
                   <span className={profit >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>${profit.toFixed(2)} ({marginPct.toFixed(0)}%)</span>
                 </div>
+              </div>
+
+              <div className="mt-5 pt-4 border-t border-gray-800 max-w-md">
+                <label className="text-sm text-gray-400 mb-1 block">Estimated shipping ($)</label>
+                <input
+                  value={estimatedShipping}
+                  onChange={e => setEstimatedShipping(e.target.value)}
+                  type="number"
+                  step="0.01"
+                  placeholder="0.00"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                />
+                <label className="flex items-center gap-2 mt-2 text-sm text-gray-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={shippingBuyerCovered}
+                    onChange={e => setShippingBuyerCovered(e.target.checked)}
+                    className="accent-indigo-500"
+                  />
+                  Buyer covers shipping
+                </label>
+                <p className="text-gray-600 text-xs mt-1">
+                  {shippingBuyerCovered
+                    ? "Collected as revenue and spent on postage — roughly a wash on profit, aside from the marketplace fee still applying to that portion, like the rest of the sale."
+                    : "You're paying for it — comes straight out of profit."}
+                </p>
               </div>
             </div>
           )
@@ -506,28 +572,46 @@ const handleGenerateInvoice = async () => {
             {lineItems.length === 0 && (
               <p className="text-gray-600 text-sm text-center py-4">No line items yet — add one below</p>
             )}
-            {lineItems.map(item => (
-              <div key={item.id} className="grid grid-cols-12 gap-2 items-center bg-gray-800 rounded-lg px-4 py-3">
-                <p className="col-span-6 text-white text-sm">{item.description}</p>
-                <input
-                  value={item.quantity}
-                  onChange={e => updateLineItemQty(item.id, e.target.value)}
-                  type="number"
-                  min="1"
-                  className="col-span-2 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 text-sm text-center focus:outline-none focus:border-indigo-500"
-                />
-                <p className="col-span-2 text-gray-400 text-sm text-right">${item.unit_price.toFixed(2)}</p>
-                <div className="col-span-2 flex items-center justify-end gap-2">
-                  <p className="text-white text-sm font-medium">${(item.quantity * item.unit_price).toFixed(2)}</p>
-                  <button
-                    onClick={() => removeLineItem(item.id)}
-                    className="text-gray-600 hover:text-red-400 transition text-lg leading-none"
-                  >
-                    ×
-                  </button>
+            {lineItems.map(item => {
+              const excluded = item.item_type === 'shipping' && item.buyer_covered === false
+              return (
+                <div key={item.id} className="grid grid-cols-12 gap-2 items-center bg-gray-800 rounded-lg px-4 py-3">
+                  <div className="col-span-6">
+                    <p className="text-white text-sm">{item.description}</p>
+                    {item.item_type === 'shipping' && (
+                      <label className="flex items-center gap-1.5 mt-1 text-xs text-gray-500 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={item.buyer_covered !== false}
+                          onChange={e => toggleBuyerCovered(item.id, e.target.checked)}
+                          className="accent-indigo-500"
+                        />
+                        Buyer covered this
+                      </label>
+                    )}
+                  </div>
+                  <input
+                    value={item.quantity}
+                    onChange={e => updateLineItemQty(item.id, e.target.value)}
+                    type="number"
+                    min="1"
+                    className="col-span-2 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 text-sm text-center focus:outline-none focus:border-indigo-500"
+                  />
+                  <p className="col-span-2 text-gray-400 text-sm text-right">${item.unit_price.toFixed(2)}</p>
+                  <div className="col-span-2 flex items-center justify-end gap-2">
+                    <p className={`text-sm font-medium ${excluded ? 'text-gray-600 line-through' : 'text-white'}`}>
+                      ${(item.quantity * item.unit_price).toFixed(2)}
+                    </p>
+                    <button
+                      onClick={() => removeLineItem(item.id)}
+                      className="text-gray-600 hover:text-red-400 transition text-lg leading-none"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           {/* Add Line Item */}
