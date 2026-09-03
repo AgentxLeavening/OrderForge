@@ -76,18 +76,27 @@ The Supabase DB is remote and shared across machines — no seeding needed.
 ## Current state (as of this session)
 Live and deployed:
 - Deployed to Vercel: **https://orderforge-eight.vercel.app** (auto-redeploys on push/merge
-  to `main`). Only `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY` are set there
-  so far — the marketplace integration env vars aren't, since that code isn't merged yet.
-- On `main`: Cancelled order status + shared restock RPC (was PR #7), forgot/reset password
-  (was PR #8), plus everything from before (profit/margin, low-stock alerts, sale-price
-  billing, launch polish).
+  to `main`).
+- On `main`: everything through PR #9 — cancelled order status + shared restock RPC, forgot/
+  reset password, auth architecture (cookie-based sessions), and the full Etsy marketplace
+  integration (eBay side still unverified — see below), plus everything from before
+  (profit/margin, low-stock alerts, sale-price billing, launch polish).
+- **Etsy connection confirmed working end-to-end on the live production site**, not just
+  local dev (2026-09-03) — shop "LikeGravyArts" connected, synced, no errors.
 - **Supabase Site URL / Redirect URLs must include the Vercel domain** (Authentication →
   URL Configuration) or password-reset emails link back to `localhost` instead — hit this
   live, fixed by adding `https://orderforge-eight.vercel.app/**` alongside `localhost:3000/**`.
+- **All Vercel env vars must be set explicitly, per var** — adding some and assuming others
+  "must be fine" doesn't hold: `NEXT_PUBLIC_APP_URL`, `ETSY_CLIENT_ID`, `ETSY_REDIRECT_URI`,
+  `SUPABASE_SERVICE_ROLE_KEY`, and `ETSY_SHARED_SECRET` all silently ended up blank at one
+  point or another on Vercel during setup (some via a name mixup — `ETSY_CLIENT_SECRET` got
+  created instead of `ETSY_SHARED_SECRET`), each producing a different confusing downstream
+  symptom (redirects to localhost, "missing API credentials," "couldn't connect," Settings
+  silently showing "not connected" with no error). **Vercel also masks variable values in the
+  list view** — a value that looks blank at a glance may just need the reveal/eye icon
+  clicked to confirm. If Etsy/eBay integration breaks again after an env var change, check
+  every relevant var's actual value individually rather than assuming "I added it" was enough.
 `npm run build` passes; `npx tsc --noEmit` is clean.
-
-Uncommitted on top of `main` (this session's work, verified live, not yet pushed — see below):
-Auth architecture change + full Etsy marketplace integration.
 
 ## Auth architecture (changed this session)
 Switched from a plain `@supabase/supabase-js` browser client (session in
@@ -160,6 +169,3 @@ applying are all flagged inline as needing a live check once credentials exist.
 - eBay side of the marketplace integration is unverified (see above) — needs a
   registered eBay app + live test pass before relying on it.
 - Marketplace sync is manual ("Sync now" button) — no scheduled/background sync yet.
-- Auth/marketplace-integration work above is still uncommitted on top of `main` locally —
-  commit + push + PR it (see git history / ask for the commands) before it's at risk of
-  being lost, and before Vercel/Supabase get the new env vars it needs to actually run there.
