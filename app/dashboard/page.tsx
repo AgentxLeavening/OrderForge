@@ -60,6 +60,7 @@ const COLUMNS = [
   { key: 'quoted', label: 'Quoted' },
   { key: 'in_progress', label: 'In Progress' },
   { key: 'complete', label: 'Complete' },
+  { key: 'cancelled', label: 'Cancelled' },
 ]
 
 const TYPE_EMOJI: Record<string, string> = {
@@ -117,8 +118,8 @@ export default function DashboardPage() {
         orderTotals[it.order_id] = (orderTotals[it.order_id] || 0) + lineTotal
       })
 
-      // Map order totals to client revenue
-      ordersData.forEach(o => {
+      // Map order totals to client revenue (cancelled orders never billed)
+      ordersData.filter(o => o.status !== 'cancelled').forEach(o => {
         const clientName = o.client_id
           ? (clients.find(c => c.id === o.client_id)?.name || 'Unassigned')
           : 'Unassigned'
@@ -204,6 +205,16 @@ export default function DashboardPage() {
       .from('orders')
       .update({ status: newStatus })
       .eq('id', draggableId)
+
+    // Dropping into Cancelled restocks any materials this order deducted.
+    // The RPC is idempotent, so re-dropping (or later deleting) is safe.
+    if (newStatus === 'cancelled') {
+      const { error: restockErr } = await supabase.rpc('restock_inventory_for_order', {
+        p_order_id: draggableId,
+        p_reason: 'order_cancelled_restock',
+      })
+      if (restockErr) console.warn('Failed restocking cancelled order', restockErr)
+    }
   }
 
   // Widget layout drag and drop
@@ -255,7 +266,7 @@ export default function DashboardPage() {
     return matchesClient && matchesStatus && matchesSearch
   })
 
-  const activeOrders = filteredOrders.filter(o => o.status !== 'complete').length
+  const activeOrders = filteredOrders.filter(o => o.status !== 'complete' && o.status !== 'cancelled').length
   const clientCount = new Set(filteredOrders.map(order => order.client_id).filter(Boolean)).size
   const clientCountsMap = filteredOrders.reduce((acc: Record<string, number>, o) => {
     const name = Array.isArray(o.clients)
@@ -293,6 +304,7 @@ export default function DashboardPage() {
   // order_items line totals, whose unit_price is the cost basis for
   // template-created orders and so would understate revenue.
   const pricedOrders = filteredOrders
+    .filter(o => o.status !== 'cancelled')
     .map(o => {
       if (o.suggested_price == null && o.material_cost == null) return null
       const price = Number(o.suggested_price) || 0

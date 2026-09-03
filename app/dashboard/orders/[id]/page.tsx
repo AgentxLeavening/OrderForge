@@ -52,6 +52,7 @@ const STATUS_OPTIONS = [
   { value: 'quoted', label: 'Quoted' },
   { value: 'in_progress', label: 'In Progress' },
   { value: 'complete', label: 'Complete' },
+  { value: 'cancelled', label: 'Cancelled' },
 ]
 
 const STATUS_COLORS: Record<string, string> = {
@@ -59,6 +60,7 @@ const STATUS_COLORS: Record<string, string> = {
   quoted: 'bg-yellow-500/20 text-yellow-400',
   in_progress: 'bg-blue-500/20 text-blue-400',
   complete: 'bg-green-500/20 text-green-400',
+  cancelled: 'bg-red-500/20 text-red-400',
 }
 
 const channelLabel = (value: string | null | undefined) =>
@@ -153,6 +155,17 @@ export default function OrderDetailPage() {
       })
       .eq('id', id)
 
+    // Cancelling restocks any materials this order deducted. The RPC is
+    // idempotent (a no-op once already restocked), so it's safe to call on
+    // every save while status is Cancelled rather than only on the transition.
+    if (status === 'cancelled') {
+      const { error: restockErr } = await supabase.rpc('restock_inventory_for_order', {
+        p_order_id: id,
+        p_reason: 'order_cancelled_restock',
+      })
+      if (restockErr) console.warn('Failed restocking cancelled order', restockErr)
+    }
+
     setSaving(false)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
@@ -204,44 +217,14 @@ export default function OrderDetailPage() {
 
     setDeleting(true)
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-
-      // Reverse each logged deduction. `change` is negative and already reflects
-      // the actual amount removed (deduction clamps at 0), so -change is the
-      // precise restock amount.
-      if (user) {
-        const { data: deductions } = await supabase
-          .from('inventory_transactions')
-          .select('inventory_item_id, change')
-          .eq('order_id', id)
-          .eq('reason', 'order_template_deduction')
-
-        for (const tx of (deductions || []) as { inventory_item_id: string | null; change: number }[]) {
-          const restockAmt = -(Number(tx.change) || 0)
-          if (!tx.inventory_item_id || restockAmt <= 0) continue
-
-          const { data: inv } = await supabase
-            .from('inventory_items')
-            .select('quantity, name, sku')
-            .eq('id', tx.inventory_item_id)
-            .single()
-          if (!inv) continue // item deleted since — nothing to restock
-
-          const prevQty = Number(inv.quantity) || 0
-          const newQty = prevQty + restockAmt
-          await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', tx.inventory_item_id)
-          await supabase.from('inventory_transactions').insert({
-            inventory_item_id: tx.inventory_item_id,
-            user_id: user.id,
-            order_id: id,
-            change: restockAmt,
-            previous_quantity: prevQty,
-            new_quantity: newQty,
-            reason: 'order_deleted_restock',
-            metadata: { name: inv.name, sku: inv.sku, order_number: order.order_number },
-          })
-        }
-      }
+      // Reverse each logged deduction via the same row-locked, idempotent RPC
+      // used for cancellation (a no-op if this order was already restocked,
+      // e.g. cancelled first and then deleted).
+      const { error: restockErr } = await supabase.rpc('restock_inventory_for_order', {
+        p_order_id: id,
+        p_reason: 'order_deleted_restock',
+      })
+      if (restockErr) console.warn('Failed restocking deleted order', restockErr)
 
       await supabase.from('invoices').delete().eq('order_id', id)
       await supabase.from('order_items').delete().eq('order_id', id)
@@ -447,6 +430,9 @@ const handleGenerateInvoice = async () => {
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
+              {status === 'cancelled' && (
+                <p className="text-gray-600 text-xs mt-1">Saving as Cancelled restocks any materials this order deducted, and keeps the order on record.</p>
+              )}
             </div>
 
             <div>
