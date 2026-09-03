@@ -187,11 +187,6 @@ export default function DashboardPage() {
     init()
   }, [router, fetchOrders])
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    router.push('/login')
-  }
-
   const onDragEnd = async (result: DropResult) => {
     const { destination, source, draggableId } = result
     if (!destination) return
