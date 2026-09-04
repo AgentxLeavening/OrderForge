@@ -151,16 +151,48 @@ actually showed (training knowledge was wrong on these specifics):
   described above; got it wrong on the first pass, fixed after real numbers
   showed shipping reading as pure profit).
 
-**eBay, Shopify, TikTok Shop, Facebook & Instagram Shop: all unverified** —
-same shared pattern as Etsy but no credentials tested for any of them yet.
-Confidence varies a lot by provider:
-- **eBay**: closest to Etsy's shape (bearer-token API). Field names
-  (`pricingSummary`, `lineItemCost`, `orderFulfillmentStatus`) and whether
-  Etsy's `x-api-key`-style quirk applies here too are unverified.
-- **Shopify**: standard, well-documented OAuth; the shop-domain-first flow
-  (above) is the main untested piece, along with `orders.json` field names.
-  Lowest-risk of the four to verify once you have a store to test against —
-  no approval wait, you can generate credentials yourself.
+**eBay: connect + sync structurally verified 2026-09-04** (Sandbox credentials,
+shop "like-gravy" seller test user) — OAuth connect/callback, token exchange,
+and the account-lookup + orders-fetch API calls all confirmed working
+end-to-end. **Order field mapping (`pricingSummary`, `lineItemCost`,
+`orderFulfillmentStatus`) is still unverified** — blocked on getting a real
+Sandbox test order created (hit an eBay-side Sandbox listing issue, a
+"Shipping method" dropdown with no values, seemingly a Sandbox outage rather
+than our config — parked, pick back up later). Real findings from what *did*
+get tested live, corrected from initial guesses:
+- **eBay hard-requires HTTPS for the redirect URI — no exception for
+  localhost**, unlike Etsy/Shopify which both allow plain `http://localhost`.
+  Its RuName "Accepted URL" field won't even save a value without `https://`
+  (auto-re-adds the `s` if you try to remove it). For local dev testing
+  against eBay specifically, run `npx next dev --experimental-https`
+  (Next.js's built-in self-signed-cert dev server — first run downloads
+  `mkcert` and generates a cert into `certificates/`, gitignored) instead of
+  the normal `npm run dev`, and temporarily point `NEXT_PUBLIC_APP_URL` +
+  `EBAY_REDIRECT_URI`'s registered Accepted URL at `https://localhost:3000`.
+  Switch back to plain `npm run dev` afterward — Etsy/Shopify's registered
+  redirect URIs are still the `http://` versions and would break under the
+  https-only dev server.
+- The account-lookup call (`GET /sell/account/v1/privilege`, originally added
+  as a token sanity-check + placeholder identity) 403s — needs a `sell.account`
+  scope we don't request and don't otherwise need. Removed entirely rather
+  than requesting a scope just for this; `fetchShopInfo` now returns a static
+  placeholder with no API call, matching how little eBay's Fulfillment API
+  actually has a "shop" concept to look up in the first place.
+- eBay's own OAuth consent screen won't re-prompt once you've approved a
+  given RuName+account combo before (e.g. via eBay's own "Get a Token" testing
+  tool) — expected OAuth behavior, not a bug, if "Connect eBay" completes
+  without showing a consent screen.
+
+**Shopify: connect verified live 2026-09-03** (dev store
+`like-gravy-dev.myshopify.com`) — OAuth connect/callback and token exchange
+confirmed working. **Order sync blocked** on a Shopify policy wall: orders
+contain customer PII, and REST endpoints reject requests until the app
+selects its protected-customer-data fields in the Partner Dashboard (Apps →
+app → **API access requests** → **Protected customer data access** → Request
+access → select fields, e.g. Customer name). For a development store this is
+immediate, no review wait — just needs doing once. Shop name currently stores
+as the raw domain rather than a friendly display name (cosmetic; skipped the
+extra lookup call since the domain's already known at connect time).
 - **TikTok Shop**: HEAVILY unverified — every API call needs a request
   signature (HMAC-SHA256 over the app secret; see `lib/integrations/tiktok.ts`
   `signRequest`), not just OAuth. The exact canonicalization, endpoint
@@ -201,8 +233,8 @@ Confidence varies a lot by provider:
   the Turbopack build does not fail on them.
 - One historical order `ORD-880512` has a `suggested_price` ($15) but no line item —
   add it by hand on the order page if you want its revenue/invoice to reflect $15.
-- eBay/Shopify/TikTok Shop/Facebook are all unverified (see above) — each
-  needs a registered app + live test pass, same as Etsy went through, before
-  relying on it. Shopify is the quickest to unblock (self-service
-  credentials, no approval wait).
+- eBay/Shopify: connect verified live, but order sync unverified end-to-end
+  for both — eBay on a real test order (parked, see above), Shopify on the
+  protected-customer-data step (see above, quick fix, just needs doing).
+  TikTok Shop/Facebook: fully unverified, no credentials tested at all yet.
 - Marketplace sync is manual ("Sync now" button) — no scheduled/background sync yet.
