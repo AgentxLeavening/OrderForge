@@ -7,6 +7,7 @@ import NewOrderModal, { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 import DashboardWidget from '@/app/components/DashboardWidget'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import { isLowStock, unitShort } from '@/lib/inventory'
+import { computeOrderEconomics } from '@/lib/pricing'
 import Link from 'next/link'
 
 type LowStockItem = {
@@ -61,6 +62,7 @@ const COLUMNS = [
   { key: 'inquiry', label: 'Inquiry' },
   { key: 'quoted', label: 'Quoted' },
   { key: 'in_progress', label: 'In Progress' },
+  { key: 'shipped', label: 'Shipped' },
   { key: 'complete', label: 'Complete' },
   { key: 'cancelled', label: 'Cancelled' },
 ]
@@ -300,26 +302,17 @@ export default function DashboardPage() {
       .slice(0, 5)
       .map(([clientId, v]) => ({ clientId, name: v.name, count: v.count }))
   })()
-  // Profit / margin economics from the persisted pricing breakdown. This mirrors
-  // the order-detail "Pricing & Margin" definition: shipping is always a real
-  // cost (materials + labor + shipping), and only ever revenue when the buyer
-  // covers it — so buyer-covered shipping is roughly a wash on profit
-  // (collected, then spent), aside from the marketplace fee still applying to
-  // that portion; seller-covered shipping is pure cost with no offsetting
-  // revenue. This is computed from persisted fields rather than order_items
-  // line totals, whose unit_price is the cost basis for template-created
-  // orders and so would understate revenue.
+  // Profit / margin economics from the persisted pricing breakdown — shared
+  // formula (lib/pricing.ts) with the order-detail "Pricing & Margin" card,
+  // so the two can never drift out of sync again. Computed from persisted
+  // fields rather than order_items line totals, whose unit_price is the cost
+  // basis for template-created orders and so would understate revenue.
   const pricedOrders = filteredOrders
     .filter(o => o.status !== 'cancelled')
     .map(o => {
       if (o.suggested_price == null && o.material_cost == null) return null
-      const price = Number(o.suggested_price) || 0
-      const shipping = Number(o.estimated_shipping) || 0
-      const buyerCoversShipping = o.shipping_buyer_covered !== false
-      const cost = (Number(o.material_cost) || 0) + (Number(o.labor_cost) || 0) + shipping
-      const revenue = price + (buyerCoversShipping ? shipping : 0)
-      const feeAmt = revenue * (Number(o.fee_pct) || 0) / 100
-      return { order: o, price: revenue, cost, feeAmt, profit: revenue - cost - feeAmt }
+      const { revenue, cost, feeAmt, profit } = computeOrderEconomics(o)
+      return { order: o, price: revenue, cost, feeAmt, profit }
     })
     .filter((e): e is NonNullable<typeof e> => e !== null)
 
@@ -545,7 +538,7 @@ export default function DashboardPage() {
 
   const renderKanban = () => (
     <DragDropContext onDragEnd={onDragEnd}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         {COLUMNS.map(col => {
           const colOrders = filteredOrders.filter(o => o.status === col.key)
           return (

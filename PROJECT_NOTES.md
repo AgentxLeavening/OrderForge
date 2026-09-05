@@ -112,14 +112,25 @@ carry over** — everyone (including you) has to log in again once.
 session must never read (see marketplace_connections below);
 `SUPABASE_SERVICE_ROLE_KEY` must be set for it to work.
 
-## Marketplace integrations (Etsy/eBay)
-Goal: pull a seller's Etsy/eBay orders in automatically. Per-provider code in
-`lib/integrations/{etsy,ebay}.ts` implementing a shared `MarketplaceProvider`
-interface (`lib/integrations/types.ts`); OAuth + sync Route Handlers live at
+## Marketplace integrations (Etsy/eBay/Shopify/TikTok Shop/Facebook)
+Goal: pull a seller's marketplace orders in automatically. Per-provider code in
+`lib/integrations/{etsy,ebay,shopify,tiktok,facebook}.ts` implementing a shared
+`MarketplaceProvider` interface (`lib/integrations/types.ts` — `id`, `label`,
+plus the OAuth/fetch methods); OAuth + sync Route Handlers live at
 `app/api/integrations/<provider>/{connect,callback,sync,disconnect}` (thin
 wrappers around `lib/integrations/routeHelpers.ts`); shared import/update
 logic in `lib/integrations/sync.ts`; UI in the Settings page ("Marketplace
-connections" section).
+connections" section) — `marketplace_connections.provider` check constraint
+(migration 021) allows all five.
+
+**Shopify is architecturally different from the others**: there's no single
+global authorize URL — every OAuth request is scoped to a specific
+`<store>.myshopify.com` domain, which the seller has to type into a box in
+Settings *before* clicking Connect (`?shop=` on the connect route, threaded
+through a short-lived cookie to the callback, same as the PKCE state/verifier
+cookies). `MarketplaceProvider.buildAuthorizeUrl`/`exchangeCodeForToken` take
+an optional `shopDomain` for this; every other provider ignores it. Shopify's
+offline access tokens don't expire and have no refresh flow.
 
 **Etsy: fully live-tested end-to-end against a real approved app** (2026-09-03)
 — connect, token exchange, shop lookup, order import, shipping/tax
@@ -140,14 +151,64 @@ actually showed (training knowledge was wrong on these specifics):
   described above; got it wrong on the first pass, fixed after real numbers
   showed shipping reading as pure profit).
 
-**eBay: still unverified** — same shape/pattern as Etsy but no eBay
-credentials tested yet. Field names (`pricingSummary`, `lineItemCost`,
-`orderFulfillmentStatus`) and the `x-api-key`-style quirk possibly not
-applying are all flagged inline as needing a live check once credentials exist.
+**eBay: connect + sync structurally verified 2026-09-04** (Sandbox credentials,
+shop "like-gravy" seller test user) — OAuth connect/callback, token exchange,
+and the account-lookup + orders-fetch API calls all confirmed working
+end-to-end. **Order field mapping (`pricingSummary`, `lineItemCost`,
+`orderFulfillmentStatus`) is still unverified** — blocked on getting a real
+Sandbox test order created (hit an eBay-side Sandbox listing issue, a
+"Shipping method" dropdown with no values, seemingly a Sandbox outage rather
+than our config — parked, pick back up later). Real findings from what *did*
+get tested live, corrected from initial guesses:
+- **eBay hard-requires HTTPS for the redirect URI — no exception for
+  localhost**, unlike Etsy/Shopify which both allow plain `http://localhost`.
+  Its RuName "Accepted URL" field won't even save a value without `https://`
+  (auto-re-adds the `s` if you try to remove it). For local dev testing
+  against eBay specifically, run `npx next dev --experimental-https`
+  (Next.js's built-in self-signed-cert dev server — first run downloads
+  `mkcert` and generates a cert into `certificates/`, gitignored) instead of
+  the normal `npm run dev`, and temporarily point `NEXT_PUBLIC_APP_URL` +
+  `EBAY_REDIRECT_URI`'s registered Accepted URL at `https://localhost:3000`.
+  Switch back to plain `npm run dev` afterward — Etsy/Shopify's registered
+  redirect URIs are still the `http://` versions and would break under the
+  https-only dev server.
+- The account-lookup call (`GET /sell/account/v1/privilege`, originally added
+  as a token sanity-check + placeholder identity) 403s — needs a `sell.account`
+  scope we don't request and don't otherwise need. Removed entirely rather
+  than requesting a scope just for this; `fetchShopInfo` now returns a static
+  placeholder with no API call, matching how little eBay's Fulfillment API
+  actually has a "shop" concept to look up in the first place.
+- eBay's own OAuth consent screen won't re-prompt once you've approved a
+  given RuName+account combo before (e.g. via eBay's own "Get a Token" testing
+  tool) — expected OAuth behavior, not a bug, if "Connect eBay" completes
+  without showing a consent screen.
 
-- `marketplace_connections` (migration 016) holds OAuth tokens — RLS enabled
-  with **no policies**, so it's reachable only via the service-role client,
-  never the user's own session.
+**Shopify: connect verified live 2026-09-03** (dev store
+`like-gravy-dev.myshopify.com`) — OAuth connect/callback and token exchange
+confirmed working. **Order sync blocked** on a Shopify policy wall: orders
+contain customer PII, and REST endpoints reject requests until the app
+selects its protected-customer-data fields in the Partner Dashboard (Apps →
+app → **API access requests** → **Protected customer data access** → Request
+access → select fields, e.g. Customer name). For a development store this is
+immediate, no review wait — just needs doing once. Shop name currently stores
+as the raw domain rather than a friendly display name (cosmetic; skipped the
+extra lookup call since the domain's already known at connect time).
+- **TikTok Shop**: HEAVILY unverified — every API call needs a request
+  signature (HMAC-SHA256 over the app secret; see `lib/integrations/tiktok.ts`
+  `signRequest`), not just OAuth. The exact canonicalization, endpoint
+  versions, and even the authorize/token URLs are a best-effort
+  reconstruction, more likely to need real correction than anything else here.
+- **Facebook & Instagram Shop**: HEAVILY unverified — two independent risks.
+  The commerce permissions this needs typically require a formal Meta App
+  Review before they work for anyone but the app's own admins/testers
+  (separate from whether the code is right), and there's no single "shop ID"
+  handed back after OAuth — `fetchShopInfo` has to discover a Commerce
+  Account through Business Manager, which is a real simplification
+  (first business, first commerce account) for anyone with more than one.
+
+- `marketplace_connections` (migration 016, provider list widened in 021)
+  holds OAuth tokens — RLS enabled with **no policies**, so it's reachable
+  only via the service-role client, never the user's own session.
 - `orders.external_source`/`external_order_id` (migrations 017+018) make
   imports idempotent — re-syncing never duplicates an order. 018 fixes 017's
   unique index (had to be a real constraint, not a partial one, for
@@ -159,13 +220,76 @@ applying are all flagged inline as needing a live check once credentials exist.
 - New env vars documented inline in `.env.local`: `ETSY_CLIENT_ID`,
   `ETSY_REDIRECT_URI`, `ETSY_SHARED_SECRET`, `EBAY_CLIENT_ID`,
   `EBAY_CLIENT_SECRET`, `EBAY_REDIRECT_URI`, `EBAY_ENV`,
-  `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_APP_URL`.
+  `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_REDIRECT_URI`,
+  `TIKTOK_APP_KEY`, `TIKTOK_APP_SECRET`, `TIKTOK_REDIRECT_URI`,
+  `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET`, `FACEBOOK_REDIRECT_URI`,
+  `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_APP_URL`. **Every Vercel env var
+  needs its actual value double-checked individually when wiring a new
+  provider up there** — see the "All Vercel env vars must be set explicitly"
+  note above; this bit Etsy's rollout on five separate variables.
+
+## Order workflow automation (2026-09-04/05)
+- **Shipped status** added between In Progress and Complete (`orders.status`
+  is free text, no DB constraint, so this needed no migration) — kanban
+  board widened to `xl:grid-cols-6` so all six statuses fit on one row.
+  Marketplace imports map a shipped/fulfilled signal to `'shipped'`, not
+  `'complete'` — none of the providers actually tell us a transaction is
+  fully closed out, only that it shipped.
+- **Generate Invoice auto-sets status to Quoted** (sending a price *is* the
+  quote) — but the button is only enabled while status is Inquiry or Quoted,
+  otherwise it would keep dragging a further-along order backward every time
+  someone re-generates an invoice.
+- **Tracking Number field** (`orders.tracking_number`, migration 022) —
+  filling it in for the first time auto-advances status to Shipped, but only
+  forward and only from an earlier stage (never touches an order already
+  Shipped/Complete/Cancelled), so re-saving other fields later can't drag a
+  finished order backward either.
+
+## Reports (`/dashboard/reports`, 2026-09-05)
+Roadmap of 4 differentiator features (things no single marketplace's own
+dashboard could show, since they only know about their own channel): built
+the first two, planned the other two.
+
+- **Cross-Channel Profitability** (`/dashboard/products/profitability`, also
+  linked from Products) — groups every priced order by product then by
+  channel, showing revenue/profit/margin per pair (e.g. "this decal earns
+  41% margin on Shopify but only 19% on Etsy"). Needed `orders.product_id`
+  (migration 023, nullable FK to `products`) since orders previously had no
+  formal link to a template at all:
+  - Template-created orders set it directly at creation (`NewOrderModal`).
+  - Marketplace imports auto-match by exact title against the user's product
+    names (case/whitespace-insensitive), done once at insert time in
+    `sync.ts` — re-syncing an existing order never touches `product_id`
+    again, so a manual correction always survives.
+  - Every order also gets a manual "Product" dropdown on its detail page to
+    link or override at any time — this was a deliberate design choice
+    (user: "a mix of both") over relying on auto-match alone, since listing
+    titles often differ slightly across channels for "the same" item.
+- **Tax Season Export** (`/dashboard/reports/tax-export`) — date range →
+  one CSV (order number, date, channel, buyer, revenue, materials, labor,
+  shipping, marketplace fee, profit) across every channel, cancelled orders
+  excluded. Plain client-side CSV building (no library) with minimal
+  comma/quote/newline escaping.
+- **lib/pricing.ts** — extracted the order-economics formula (shipping
+  always cost, only sometimes also revenue, etc.) out of the order detail
+  page and dashboard widget into one shared function, now also used by both
+  reports above. Was previously duplicated in two places, which is exactly
+  what let the 2026-09-03 shipping-as-pure-profit bug happen — do not
+  reintroduce a third inline copy of this formula anywhere.
+- **Not yet built**: a unified reorder/purchase list (low-stock items →
+  real shopping list with estimated cost, timed to actual cross-channel
+  consumption velocity), and estimated-vs-actual time tracking per order
+  (a timer compared against the `est_time` used in pricing).
 
 ## Known debt / follow-ups
 - Pre-existing ESLint errors (`no-explicit-any`, some react-hooks rules) — **non-blocking**,
   the Turbopack build does not fail on them.
 - One historical order `ORD-880512` has a `suggested_price` ($15) but no line item —
   add it by hand on the order page if you want its revenue/invoice to reflect $15.
-- eBay side of the marketplace integration is unverified (see above) — needs a
-  registered eBay app + live test pass before relying on it.
+- **Shopify: fully verified 2026-09-05** — protected-customer-data step done,
+  a real test order synced cleanly with correct field mapping (subtotal,
+  line items, buyer). Consider this provider done.
+- eBay: connect + sync API calls verified, but order field mapping still
+  unverified — blocked on a real Sandbox test order (parked, see above).
+- TikTok Shop/Facebook: fully unverified, no credentials tested at all yet.
 - Marketplace sync is manual ("Sync now" button) — no scheduled/background sync yet.

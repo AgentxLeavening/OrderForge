@@ -41,6 +41,7 @@ function tokenSetFromResponse(json: any): TokenSet {
 
 export const ebayProvider: MarketplaceProvider = {
   id: 'ebay',
+  label: 'eBay',
 
   buildAuthorizeUrl({ state }) {
     requireEnv()
@@ -90,15 +91,14 @@ export const ebayProvider: MarketplaceProvider = {
   },
 
   // eBay's Fulfillment API is account-scoped (no separate "shop id" the way
-  // Etsy has one) — there's no real shop lookup to do, so this just confirms
-  // the token works and returns a placeholder identity.
-  async fetchShopInfo(accessToken): Promise<ShopInfo> {
-    const res = await fetch(`${API_HOST}/sell/account/v1/privilege`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
-    if (!res.ok) throw new Error(`eBay account check failed: ${res.status} ${await res.text()}`)
-    const json = await res.json()
-    return { externalShopId: json.sellerAccount?.username || 'ebay-account', externalShopName: null }
+  // Etsy has one), so there's no real shop lookup to do. This used to call
+  // GET /sell/account/v1/privilege as a sanity-check + placeholder identity,
+  // but that endpoint needs a different OAuth scope (sell.account) than what
+  // we request (sell.fulfillment) and 403s — confirmed live 2026-09-04.
+  // Skip the call entirely rather than requesting a scope we don't actually
+  // need anything else from.
+  async fetchShopInfo(): Promise<ShopInfo> {
+    return { externalShopId: 'ebay-account', externalShopName: null }
   },
 
   async fetchOrdersSince({ accessToken }): Promise<NormalizedOrder[]> {
@@ -138,11 +138,11 @@ export const ebayProvider: MarketplaceProvider = {
         items.push({ description: 'Shipping & tax', quantity: 1, unitPrice: shippingAndTax, itemType: 'shipping', buyerCovered: true })
       }
 
-      const complete = ['FULFILLED', 'PARTIALLY_FULFILLED'].includes(o.orderFulfillmentStatus)
+      const shipped = ['FULFILLED', 'PARTIALLY_FULFILLED'].includes(o.orderFulfillmentStatus)
       return {
         externalOrderId: String(o.orderId),
         buyerName: o.buyer?.username || null,
-        status: complete ? 'complete' : 'in_progress',
+        status: shipped ? 'shipped' : 'in_progress',
         itemsSubtotal,
         shippingAndTax,
         buyerCoversShipping: true,

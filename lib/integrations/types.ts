@@ -1,13 +1,15 @@
 // Shape every provider module normalizes its orders into, so the shared sync
-// logic (lib/integrations/sync.ts) doesn't need to know Etsy from eBay.
+// logic (lib/integrations/sync.ts) doesn't need to know one marketplace from
+// another.
 export type NormalizedOrderItem = {
   description: string
   quantity: number
   unitPrice: number
-  // 'shipping' covers shipping + tax + VAT + gift wrap − discounts, added so
-  // line items always sum to the order total. buyerCovered defaults true —
-  // a marketplace-reported total, by construction, is what the buyer paid —
-  // but the seller can uncheck it per order if that's wrong for their case.
+  // 'shipping' covers shipping + tax (+ VAT/gift wrap/discounts where a
+  // provider tracks them), added so line items always sum to the order
+  // total. buyerCovered defaults true — a marketplace-reported total, by
+  // construction, is what the buyer paid — but the seller can uncheck it
+  // per order if that's wrong for their case.
   itemType?: 'product' | 'shipping'
   buyerCovered?: boolean
 }
@@ -15,7 +17,10 @@ export type NormalizedOrderItem = {
 export type NormalizedOrder = {
   externalOrderId: string
   buyerName: string | null
-  status: 'in_progress' | 'complete'
+  // 'shipped' — out for delivery but not otherwise closed out (reviewed, no
+  // returns, etc.) — is a better fit than jumping straight to 'complete' for
+  // marketplaces that only tell us shipment status.
+  status: 'in_progress' | 'shipped' | 'complete'
   // Split, not a combined total — orders.suggested_price and
   // orders.estimated_shipping are separate fields feeding a profit formula
   // that only cancels shipping out of profit when it's in estimated_shipping
@@ -33,6 +38,12 @@ export type TokenSet = {
   refreshToken: string | null
   expiresAt: string | null // ISO, null = doesn't expire / unknown
   scope?: string | null
+  // Set by a provider that already knows the shop/store identity at token
+  // exchange time (Shopify — the shop domain is known before OAuth even
+  // starts), so routeHelpers.ts can persist it immediately instead of
+  // sync.ts resolving it lazily via fetchShopInfo on first sync.
+  shopId?: string
+  shopName?: string | null
 }
 
 export type ShopInfo = {
@@ -40,11 +51,14 @@ export type ShopInfo = {
   externalShopName: string | null
 }
 
+export type ProviderId = 'etsy' | 'ebay' | 'shopify' | 'tiktok' | 'facebook'
+
 export interface MarketplaceProvider {
-  id: 'etsy' | 'ebay'
-  buildAuthorizeUrl(params: { state: string; codeChallenge?: string }): string
-  exchangeCodeForToken(params: { code: string; codeVerifier?: string }): Promise<TokenSet>
+  id: ProviderId
+  label: string
+  buildAuthorizeUrl(params: { state: string; codeChallenge?: string; shopDomain?: string }): string
+  exchangeCodeForToken(params: { code: string; codeVerifier?: string; shopDomain?: string }): Promise<TokenSet>
   refreshAccessToken(refreshToken: string): Promise<TokenSet>
-  fetchShopInfo(accessToken: string): Promise<ShopInfo>
+  fetchShopInfo(accessToken: string, shopDomain?: string): Promise<ShopInfo>
   fetchOrdersSince(params: { accessToken: string; shopId: string; sinceISO: string | null }): Promise<NormalizedOrder[]>
 }

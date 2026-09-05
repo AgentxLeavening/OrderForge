@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import ProductEditor from '@/app/components/ProductEditor'
 import ProductCard from '@/app/components/ProductCard'
+import Link from 'next/link'
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<any[]>([])
@@ -39,14 +40,19 @@ export default function ProductsPage() {
       <div className="max-w-5xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-white">Product Templates</h1>
-          <button
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded"
-            onClick={() => setEditing({})}
-            disabled={userId === null}
-            title={userId === null ? 'Sign in to create templates' : ''}
-          >
-            + New Template
-          </button>
+          <div className="flex items-center gap-3">
+            <Link href="/dashboard/products/profitability" className="text-sm text-indigo-400 hover:text-indigo-300">
+              Cross-Channel Profitability →
+            </Link>
+            <button
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded"
+              onClick={() => setEditing({})}
+              disabled={userId === null}
+              title={userId === null ? 'Sign in to create templates' : ''}
+            >
+              + New Template
+            </button>
+          </div>
         </div>
 
         {loading ? (

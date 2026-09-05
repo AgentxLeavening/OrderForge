@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { handleConnect } from '@/lib/integrations/routeHelpers'
-import { etsyProvider } from '@/lib/integrations/etsy'
+import { facebookProvider } from '@/lib/integrations/facebook'
 
 export async function GET(request: NextRequest) {
-  return handleConnect(etsyProvider, request)
+  return handleConnect(facebookProvider, request)
 }
