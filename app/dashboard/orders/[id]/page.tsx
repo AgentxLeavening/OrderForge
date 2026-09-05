@@ -6,6 +6,7 @@ import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { generateInvoicePdf } from '@/lib/generateInvoicePdf'
 import { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
+import { computeOrderEconomics } from '@/lib/pricing'
 
 
 type Order = {
@@ -27,6 +28,8 @@ type Order = {
   fee_pct: number | null
   estimated_shipping: number | null
   shipping_buyer_covered: boolean
+  tracking_number: string | null
+  product_id: string | null
 }
 
 type LineItem = {
@@ -43,6 +46,11 @@ type ClientOption = {
   name: string
 }
 
+type ProductOption = {
+  id: string
+  name: string
+}
+
 const TYPE_OPTIONS = [
   { value: 'commission', label: '🎨 Commission / Craft' },
   { value: 'print_job', label: '🖨️ 3D Print Job' },
@@ -55,6 +63,7 @@ const STATUS_OPTIONS = [
   { value: 'inquiry', label: 'Inquiry' },
   { value: 'quoted', label: 'Quoted' },
   { value: 'in_progress', label: 'In Progress' },
+  { value: 'shipped', label: 'Shipped' },
   { value: 'complete', label: 'Complete' },
   { value: 'cancelled', label: 'Cancelled' },
 ]
@@ -63,6 +72,7 @@ const STATUS_COLORS: Record<string, string> = {
   inquiry: 'bg-gray-700 text-gray-300',
   quoted: 'bg-yellow-500/20 text-yellow-400',
   in_progress: 'bg-blue-500/20 text-blue-400',
+  shipped: 'bg-purple-500/20 text-purple-400',
   complete: 'bg-green-500/20 text-green-400',
   cancelled: 'bg-red-500/20 text-red-400',
 }
@@ -84,6 +94,7 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<Order | null>(null)
   const [lineItems, setLineItems] = useState<LineItem[]>([])
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([])
+  const [productOptions, setProductOptions] = useState<ProductOption[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -94,12 +105,14 @@ export default function OrderDetailPage() {
   const [type, setType] = useState('')
   const [status, setStatus] = useState('')
   const [clientId, setClientId] = useState('')
+  const [productId, setProductId] = useState('')
   const [salesChannel, setSalesChannel] = useState('')
   const [buyerName, setBuyerName] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
   const [estimatedShipping, setEstimatedShipping] = useState('')
   const [shippingBuyerCovered, setShippingBuyerCovered] = useState(true)
+  const [trackingNumber, setTrackingNumber] = useState('')
 
   // New line item
   const [newDesc, setNewDesc] = useState('')
@@ -126,18 +139,27 @@ export default function OrderDetailPage() {
         .eq('user_id', user.id)
         .order('name', { ascending: true })
 
+      const { data: products } = await supabase
+        .from('products')
+        .select('id, name')
+        .eq('user_id', user.id)
+        .order('name', { ascending: true })
+
       setClientOptions(clients || [])
+      setProductOptions(products || [])
       setOrder(orderData)
       setTitle(orderData.title)
       setType(orderData.type)
       setStatus(orderData.status)
       setClientId(orderData.client_id || '')
+      setProductId(orderData.product_id || '')
       setSalesChannel(orderData.sales_channel || '')
       setBuyerName(orderData.buyer_name || '')
       setDueDate(orderData.due_date || '')
       setNotes(orderData.notes || '')
       setEstimatedShipping(orderData.estimated_shipping == null ? '' : String(orderData.estimated_shipping))
       setShippingBuyerCovered(orderData.shipping_buyer_covered !== false)
+      setTrackingNumber(orderData.tracking_number || '')
 
       const { data: items } = await supabase
         .from('order_items')
@@ -154,27 +176,42 @@ export default function OrderDetailPage() {
 
   const saveOrder = async () => {
     setSaving(true)
+
+    // Filling in tracking (going from empty to set) auto-advances the order
+    // to Shipped — but only forward, and only from an earlier stage. Doesn't
+    // touch an order already Shipped/Complete/Cancelled, so re-saving other
+    // fields later never drags a finished order backward.
+    const hadTracking = !!order?.tracking_number?.trim()
+    const hasTracking = !!trackingNumber.trim()
+    const nextStatus = !hadTracking && hasTracking && !['shipped', 'complete', 'cancelled'].includes(status)
+      ? 'shipped'
+      : status
+
     await supabase
       .from('orders')
       .update({
         title,
         type,
-        status,
+        status: nextStatus,
         client_id: clientId || null,
+        product_id: productId || null,
         sales_channel: salesChannel || null,
         buyer_name: buyerName.trim() || null,
         due_date: dueDate || null,
         notes,
         estimated_shipping: estimatedShipping.trim() === '' ? null : Number(estimatedShipping),
         shipping_buyer_covered: shippingBuyerCovered,
+        tracking_number: trackingNumber.trim() || null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
 
+    if (nextStatus !== status) setStatus(nextStatus)
+
     // Cancelling restocks any materials this order deducted. The RPC is
     // idempotent (a no-op once already restocked), so it's safe to call on
     // every save while status is Cancelled rather than only on the transition.
-    if (status === 'cancelled') {
+    if (nextStatus === 'cancelled') {
       const { error: restockErr } = await supabase.rpc('restock_inventory_for_order', {
         p_order_id: id,
         p_reason: 'order_cancelled_restock',
@@ -323,6 +360,11 @@ const handleGenerateInvoice = async () => {
     notes,
   })
 
+  // Generating an invoice functions as sending the seller's price to the
+  // buyer, so auto-advance the order to Quoted.
+  await supabase.from('orders').update({ status: 'quoted' }).eq('id', id)
+  setStatus('quoted')
+
   // Generate PDF
   const pdfBytes = await generateInvoicePdf({
     invoiceNumber,
@@ -445,6 +487,21 @@ const handleGenerateInvoice = async () => {
             </div>
 
             <div>
+              <label className="text-sm text-gray-400 mb-1 block">Product <span className="text-gray-600">(optional)</span></label>
+              <select
+                value={productId}
+                onChange={e => setProductId(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500"
+              >
+                <option value="">No product linked</option>
+                {productOptions.map(product => (
+                  <option key={product.id} value={product.id}>{product.name}</option>
+                ))}
+              </select>
+              <p className="text-gray-600 text-xs mt-1">Powers the cross-channel profitability report — auto-matched by title on import, override any time.</p>
+            </div>
+
+            <div>
               <label className="text-sm text-gray-400 mb-1 block">Status</label>
               <select
                 value={status}
@@ -469,6 +526,17 @@ const handleGenerateInvoice = async () => {
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500"
               />
             </div>
+
+            <div>
+              <label className="text-sm text-gray-400 mb-1 block">Tracking Number <span className="text-gray-600">(optional)</span></label>
+              <input
+                value={trackingNumber}
+                onChange={e => setTrackingNumber(e.target.value)}
+                placeholder="e.g. 1Z999AA10123456784"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+              />
+              <p className="text-gray-600 text-xs mt-1">Adding a tracking number moves the order to Shipped on save.</p>
+            </div>
           </div>
 
           {/* Notes */}
@@ -486,21 +554,17 @@ const handleGenerateInvoice = async () => {
 
         {/* Pricing & Margin (internal — from the suggested price basis) */}
         {order && (order.suggested_price != null || order.material_cost != null) && (() => {
-          const price = Number(order.suggested_price) || 0
-          const material = Number(order.material_cost) || 0
-          const labor = Number(order.labor_cost) || 0
-          const shipping = Number(estimatedShipping) || 0
-          // Shipping is always a real cost (you pay for postage either way).
-          // It's only ever added to revenue when the buyer covers it — which
-          // makes it a wash on profit (collected, then spent). When you cover
-          // it instead, it's a cost with no offsetting revenue, so it comes
-          // straight out of profit. The marketplace fee applies to whatever
-          // revenue includes, same as the rest of the sale.
-          const cost = material + labor + shipping
-          const revenue = price + (shippingBuyerCovered ? shipping : 0)
-          const feeAmt = revenue * (Number(order.fee_pct) || 0) / 100
-          const profit = revenue - cost - feeAmt
-          const marginPct = revenue > 0 ? (profit / revenue) * 100 : 0
+          // Live-edited shipping fields, not the persisted order.* values —
+          // this card previews the effect of unsaved changes to those two
+          // inputs. Everything else comes from the persisted order.
+          const { price, material, labor, shipping, cost, revenue, feeAmt, profit, marginPct } = computeOrderEconomics({
+            suggested_price: order.suggested_price,
+            material_cost: order.material_cost,
+            labor_cost: order.labor_cost,
+            estimated_shipping: Number(estimatedShipping) || 0,
+            shipping_buyer_covered: shippingBuyerCovered,
+            fee_pct: order.fee_pct,
+          })
           return (
             <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
               <h2 className="text-white font-semibold mb-4">Pricing &amp; Margin</h2>
@@ -658,14 +722,21 @@ const handleGenerateInvoice = async () => {
           )}
         </div>
 
-              {/* Invoice Button */}
-        <div className="flex justify-end">
+              {/* Invoice Button — generating one auto-advances status to
+                  Quoted, so only allow it while the order is still at an
+                  early stage; otherwise it would keep dragging a
+                  further-along order's status backward. */}
+        <div className="flex flex-col items-end gap-1.5">
           <button
             onClick={handleGenerateInvoice}
-            className="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-3 rounded-lg transition"
+            disabled={!['inquiry', 'quoted'].includes(status)}
+            className="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-3 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-600"
           >
             Generate Invoice →
           </button>
+          {!['inquiry', 'quoted'].includes(status) && (
+            <p className="text-gray-600 text-xs">Only available while the order is Inquiry or Quoted.</p>
+          )}
         </div>
       </main>
     </div>

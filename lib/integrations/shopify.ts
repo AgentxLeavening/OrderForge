@@ -112,13 +112,13 @@ export const shopifyProvider: MarketplaceProvider = {
         items.push({ description: 'Shipping & tax', quantity: 1, unitPrice: shippingAndTax, itemType: 'shipping', buyerCovered: true })
       }
 
-      const complete = o.fulfillment_status === 'fulfilled'
+      const shipped = o.fulfillment_status === 'fulfilled'
       const buyerName = [o.customer?.first_name, o.customer?.last_name].filter(Boolean).join(' ') || o.email || null
 
       return {
         externalOrderId: String(o.id),
         buyerName,
-        status: complete ? 'complete' : 'in_progress',
+        status: shipped ? 'shipped' : 'in_progress',
         itemsSubtotal,
         shippingAndTax,
         buyerCoversShipping: true,

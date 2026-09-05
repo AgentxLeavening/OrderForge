@@ -228,13 +228,68 @@ extra lookup call since the domain's already known at connect time).
   provider up there** — see the "All Vercel env vars must be set explicitly"
   note above; this bit Etsy's rollout on five separate variables.
 
+## Order workflow automation (2026-09-04/05)
+- **Shipped status** added between In Progress and Complete (`orders.status`
+  is free text, no DB constraint, so this needed no migration) — kanban
+  board widened to `xl:grid-cols-6` so all six statuses fit on one row.
+  Marketplace imports map a shipped/fulfilled signal to `'shipped'`, not
+  `'complete'` — none of the providers actually tell us a transaction is
+  fully closed out, only that it shipped.
+- **Generate Invoice auto-sets status to Quoted** (sending a price *is* the
+  quote) — but the button is only enabled while status is Inquiry or Quoted,
+  otherwise it would keep dragging a further-along order backward every time
+  someone re-generates an invoice.
+- **Tracking Number field** (`orders.tracking_number`, migration 022) —
+  filling it in for the first time auto-advances status to Shipped, but only
+  forward and only from an earlier stage (never touches an order already
+  Shipped/Complete/Cancelled), so re-saving other fields later can't drag a
+  finished order backward either.
+
+## Reports (`/dashboard/reports`, 2026-09-05)
+Roadmap of 4 differentiator features (things no single marketplace's own
+dashboard could show, since they only know about their own channel): built
+the first two, planned the other two.
+
+- **Cross-Channel Profitability** (`/dashboard/products/profitability`, also
+  linked from Products) — groups every priced order by product then by
+  channel, showing revenue/profit/margin per pair (e.g. "this decal earns
+  41% margin on Shopify but only 19% on Etsy"). Needed `orders.product_id`
+  (migration 023, nullable FK to `products`) since orders previously had no
+  formal link to a template at all:
+  - Template-created orders set it directly at creation (`NewOrderModal`).
+  - Marketplace imports auto-match by exact title against the user's product
+    names (case/whitespace-insensitive), done once at insert time in
+    `sync.ts` — re-syncing an existing order never touches `product_id`
+    again, so a manual correction always survives.
+  - Every order also gets a manual "Product" dropdown on its detail page to
+    link or override at any time — this was a deliberate design choice
+    (user: "a mix of both") over relying on auto-match alone, since listing
+    titles often differ slightly across channels for "the same" item.
+- **Tax Season Export** (`/dashboard/reports/tax-export`) — date range →
+  one CSV (order number, date, channel, buyer, revenue, materials, labor,
+  shipping, marketplace fee, profit) across every channel, cancelled orders
+  excluded. Plain client-side CSV building (no library) with minimal
+  comma/quote/newline escaping.
+- **lib/pricing.ts** — extracted the order-economics formula (shipping
+  always cost, only sometimes also revenue, etc.) out of the order detail
+  page and dashboard widget into one shared function, now also used by both
+  reports above. Was previously duplicated in two places, which is exactly
+  what let the 2026-09-03 shipping-as-pure-profit bug happen — do not
+  reintroduce a third inline copy of this formula anywhere.
+- **Not yet built**: a unified reorder/purchase list (low-stock items →
+  real shopping list with estimated cost, timed to actual cross-channel
+  consumption velocity), and estimated-vs-actual time tracking per order
+  (a timer compared against the `est_time` used in pricing).
+
 ## Known debt / follow-ups
 - Pre-existing ESLint errors (`no-explicit-any`, some react-hooks rules) — **non-blocking**,
   the Turbopack build does not fail on them.
 - One historical order `ORD-880512` has a `suggested_price` ($15) but no line item —
   add it by hand on the order page if you want its revenue/invoice to reflect $15.
-- eBay/Shopify: connect verified live, but order sync unverified end-to-end
-  for both — eBay on a real test order (parked, see above), Shopify on the
-  protected-customer-data step (see above, quick fix, just needs doing).
-  TikTok Shop/Facebook: fully unverified, no credentials tested at all yet.
+- **Shopify: fully verified 2026-09-05** — protected-customer-data step done,
+  a real test order synced cleanly with correct field mapping (subtotal,
+  line items, buyer). Consider this provider done.
+- eBay: connect + sync API calls verified, but order field mapping still
+  unverified — blocked on a real Sandbox test order (parked, see above).
+- TikTok Shop/Facebook: fully unverified, no credentials tested at all yet.
 - Marketplace sync is manual ("Sync now" button) — no scheduled/background sync yet.

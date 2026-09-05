@@ -53,10 +53,19 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
       sinceISO: connection.last_synced_at,
     })
 
+    // Auto-match new imports to a product template by exact title (case/
+    // whitespace-insensitive) — a starting point the seller can always
+    // override on the order detail page, never touched again after insert
+    // (see the update path below, which deliberately leaves product_id alone).
+    const { data: products } = await admin.from('products').select('id, name').eq('user_id', userId)
+    const productIdByName = new Map((products || []).map(p => [String(p.name).trim().toLowerCase(), p.id]))
+
     let imported = 0
     let updated = 0
     for (const o of normalizedOrders) {
       const orderNumber = `${provider.id.toUpperCase()}-${o.externalOrderId}`.slice(0, 32)
+      const primaryItemDesc = o.items.find(it => it.itemType !== 'shipping')?.description
+      const matchedProductId = primaryItemDesc ? productIdByName.get(primaryItemDesc.trim().toLowerCase()) ?? null : null
 
       const { data: existing } = await admin
         .from('orders')
@@ -83,6 +92,7 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
             external_source: provider.id,
             external_order_id: o.externalOrderId,
             created_at: o.createdAt,
+            product_id: matchedProductId,
           })
           .select('id')
           .single()

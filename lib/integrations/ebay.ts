@@ -138,11 +138,11 @@ export const ebayProvider: MarketplaceProvider = {
         items.push({ description: 'Shipping & tax', quantity: 1, unitPrice: shippingAndTax, itemType: 'shipping', buyerCovered: true })
       }
 
-      const complete = ['FULFILLED', 'PARTIALLY_FULFILLED'].includes(o.orderFulfillmentStatus)
+      const shipped = ['FULFILLED', 'PARTIALLY_FULFILLED'].includes(o.orderFulfillmentStatus)
       return {
         externalOrderId: String(o.orderId),
         buyerName: o.buyer?.username || null,
-        status: complete ? 'complete' : 'in_progress',
+        status: shipped ? 'shipped' : 'in_progress',
         itemsSubtotal,
         shippingAndTax,
         buyerCoversShipping: true,

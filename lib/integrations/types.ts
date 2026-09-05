@@ -17,7 +17,10 @@ export type NormalizedOrderItem = {
 export type NormalizedOrder = {
   externalOrderId: string
   buyerName: string | null
-  status: 'in_progress' | 'complete'
+  // 'shipped' — out for delivery but not otherwise closed out (reviewed, no
+  // returns, etc.) — is a better fit than jumping straight to 'complete' for
+  // marketplaces that only tell us shipment status.
+  status: 'in_progress' | 'shipped' | 'complete'
   // Split, not a combined total — orders.suggested_price and
   // orders.estimated_shipping are separate fields feeding a profit formula
   // that only cancels shipping out of profit when it's in estimated_shipping

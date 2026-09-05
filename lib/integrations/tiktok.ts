@@ -131,11 +131,14 @@ export const tiktokProvider: MarketplaceProvider = {
         items.push({ description: 'Shipping & tax', quantity: 1, unitPrice: shippingAndTax, itemType: 'shipping', buyerCovered: true })
       }
 
-      const complete = ['COMPLETED', 'DELIVERED'].includes(o.order_status || o.status)
+      // 'shipped' rather than 'complete' even for COMPLETED/DELIVERED — like
+      // every provider here, unverified whether that status genuinely means
+      // "fully closed out" vs. just delivered.
+      const shipped = ['COMPLETED', 'DELIVERED'].includes(o.order_status || o.status)
       return {
         externalOrderId: String(o.order_id ?? o.id),
         buyerName: o.recipient_address?.name || o.buyer_name || null,
-        status: complete ? 'complete' : 'in_progress',
+        status: shipped ? 'shipped' : 'in_progress',
         itemsSubtotal,
         shippingAndTax,
         buyerCoversShipping: true,

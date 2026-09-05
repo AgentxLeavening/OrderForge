@@ -151,7 +151,7 @@ export const etsyProvider: MarketplaceProvider = {
       return {
         externalOrderId: String(r.receipt_id),
         buyerName: r.name || null,
-        status: r.is_shipped ? 'complete' : 'in_progress',
+        status: r.is_shipped ? 'shipped' : 'in_progress',
         itemsSubtotal,
         shippingAndTax,
         buyerCoversShipping: true,

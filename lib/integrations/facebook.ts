@@ -135,11 +135,11 @@ export const facebookProvider: MarketplaceProvider = {
         items.push({ description: 'Shipping & tax', quantity: 1, unitPrice: shippingAndTax, itemType: 'shipping', buyerCovered: true })
       }
 
-      const complete = ['COMPLETED', 'SHIPPED'].includes(o.order_status?.state || o.state)
+      const shipped = ['COMPLETED', 'SHIPPED'].includes(o.order_status?.state || o.state)
       return {
         externalOrderId: String(o.id),
         buyerName: o.buyer_details?.name || null,
-        status: complete ? 'complete' : 'in_progress',
+        status: shipped ? 'shipped' : 'in_progress',
         itemsSubtotal,
         shippingAndTax,
         buyerCoversShipping: true,
