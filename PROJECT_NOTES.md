@@ -77,12 +77,15 @@ The Supabase DB is remote and shared across machines — no seeding needed.
 Live and deployed:
 - Deployed to Vercel: **https://orderforge-eight.vercel.app** (auto-redeploys on push/merge
   to `main`).
-- On `main`: everything through PR #9 — cancelled order status + shared restock RPC, forgot/
-  reset password, auth architecture (cookie-based sessions), and the full Etsy marketplace
-  integration (eBay side still unverified — see below), plus everything from before
-  (profit/margin, low-stock alerts, sale-price billing, launch polish).
-- **Etsy connection confirmed working end-to-end on the live production site**, not just
-  local dev (2026-09-03) — shop "LikeGravyArts" connected, synced, no errors.
+- On `main`: everything through PR #10 — cancelled order status + shared restock RPC, forgot/
+  reset password, auth architecture (cookie-based sessions), Etsy/Shopify/eBay/TikTok/Facebook
+  marketplace integrations, order workflow automation (Shipped status, tracking numbers,
+  invoice-auto-quotes), and the Reports feature (cross-channel profitability, tax export),
+  plus everything from before (profit/margin, low-stock alerts, sale-price billing, launch polish).
+- **Etsy, Shopify, and eBay all confirmed working end-to-end on the live production site**
+  (not just local dev) — connect + sync verified for all three with real Vercel credentials
+  (2026-09-03 Etsy, 2026-09-05 Shopify + eBay). TikTok Shop/Facebook remain untested (no
+  credentials for either).
 - **Supabase Site URL / Redirect URLs must include the Vercel domain** (Authentication →
   URL Configuration) or password-reset emails link back to `localhost` instead — hit this
   live, fixed by adding `https://orderforge-eight.vercel.app/**` alongside `localhost:3000/**`.
