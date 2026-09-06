@@ -284,6 +284,33 @@ the first two, planned the other two.
   consumption velocity), and estimated-vs-actual time tracking per order
   (a timer compared against the `est_time` used in pricing).
 
+## Marketplace orders now deduct inventory (2026-09-06)
+Auto-matched marketplace imports (see `product_id` above) now deduct that
+product's BOM at import time, same as template-created orders — previously
+`product_id` was purely informational for the profitability report and never
+touched inventory at all, so a sale on Etsy/Shopify/eBay didn't reduce stock
+even when correctly linked to a product with a full bill of materials.
+- **Needed a new service-role-only RPC** (`deduct_inventory_for_order_admin`,
+  migration 024) rather than extending the existing `deduct_inventory_for_order`
+  (migration 007): that original function reads `auth.uid()` internally and is
+  directly callable by any signed-in client via `supabase.rpc(...)`, so adding
+  a `p_user_id` override parameter to it would let any authenticated user pass
+  someone else's user_id and deduct/corrupt their inventory. The admin version
+  takes `p_user_id` explicitly and is revoked from `public` (covers anon/
+  authenticated too) — unreachable from any client-side call regardless of
+  parameters, only usable via the service-role client in `lib/integrations/sync.ts`.
+- Only deducts on an **auto-matched product at import time** — linking a
+  product manually later on the order detail page never retroactively
+  deducts, since the seller may have already accounted for that sale by hand.
+- **Verified locally** (2026-09-06): confirmed correct end-to-end against a
+  real re-imported Etsy order — inventory dropped exactly as expected (930g
+  → 920g White PLA for two 5g-BOM test orders), transactions logged with
+  `reason = 'order_template_deduction'` so they're picked up by the existing
+  cancel/delete restock logic too. **Not yet verified on production** — this
+  is uncommitted/unpushed as of this note; commit, push, merge, then redo the
+  same live-order test against `https://orderforge-eight.vercel.app` before
+  considering it done.
+
 ## Known debt / follow-ups
 - Pre-existing ESLint errors (`no-explicit-any`, some react-hooks rules) — **non-blocking**,
   the Turbopack build does not fail on them.

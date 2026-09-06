@@ -1,6 +1,55 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
 import type { MarketplaceProvider } from './types'
 
+// Deducts a product's BOM for one auto-matched marketplace order — mirrors
+// NewOrderModal's template-order deduction (same inventory-item resolution
+// order: direct link, then SKU, then name), but via the service-role-only
+// deduct_inventory_for_order_admin RPC (migration 024), since this runs with
+// no user session/JWT to supply auth.uid() from. Best-effort: logs and
+// continues past any one BOM line that can't be resolved, same as the
+// client-side version.
+async function deductInventoryForMatchedProduct(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  userId: string,
+  orderId: string,
+  productId: string,
+  quantityMultiplier: number
+) {
+  const { data: bomItems } = await admin
+    .from('product_items')
+    .select('name, sku, quantity, inventory_item_id')
+    .eq('product_id', productId)
+
+  for (const it of bomItems || []) {
+    const needed = (Number(it.quantity) || 0) * quantityMultiplier
+    if (!needed) continue
+
+    const match = it.inventory_item_id
+      ? { id: it.inventory_item_id }
+      : it.sku
+        ? { sku: it.sku }
+        : { name: it.name }
+
+    const { data: invRows } = await admin
+      .from('inventory_items')
+      .select('id')
+      .eq('user_id', userId)
+      .match(match)
+
+    const row = (invRows || [])[0]
+    if (!row) { console.warn('No inventory item found for BOM line', it.name || it.sku); continue }
+
+    const { error: rpcErr } = await admin.rpc('deduct_inventory_for_order_admin', {
+      p_user_id: userId,
+      p_order_id: orderId,
+      p_inventory_item_id: row.id,
+      p_quantity: needed,
+      p_metadata: { product_id: productId, bom_item_name: it.name || null, auto_matched: true },
+    })
+    if (rpcErr) console.warn('Failed deducting inventory for', it.name, rpcErr)
+  }
+}
+
 // Shared pull-and-import logic for any provider conforming to
 // MarketplaceProvider. Always operates via the service-role client, always
 // scoped to the given userId — callers must have already verified the caller
@@ -111,6 +160,18 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
               buyer_covered: it.buyerCovered ?? true,
             }))
           )
+        }
+
+        // Only deducts on an auto-matched product at import time — a product
+        // linked manually later never retroactively deducts, since by then
+        // the seller may have already accounted for the sale themselves.
+        if (matchedProductId) {
+          const primaryQty = o.items.find(it => it.itemType !== 'shipping')?.quantity || 1
+          try {
+            await deductInventoryForMatchedProduct(admin, userId, inserted.id, matchedProductId, primaryQty)
+          } catch (e) {
+            console.warn(`Inventory deduction failed for ${provider.id} order ${o.externalOrderId}`, e)
+          }
         }
         continue
       }
