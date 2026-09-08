@@ -184,13 +184,27 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
       const existingTotal = (Number(existing.suggested_price) || 0) + (Number(existing.estimated_shipping) || 0)
       const newTotal = o.itemsSubtotal + o.shippingAndTax
       const totalChanged = Math.abs(existingTotal - newTotal) > 0.005
-      const statusChanged = existing.status !== o.status
+
+      // Never let a re-sync move status backward. No provider's normalized
+      // status ever reaches 'complete' (see the type comment in types.ts —
+      // marketplaces only ever tell us up through 'shipped'; 'complete' is
+      // deliberately something the seller decides in OrderForge, e.g. after
+      // a return window). Without this guard, an order the seller already
+      // dragged to Complete gets bounced straight back to Shipped on the
+      // very next sync, since the marketplace still just reports 'shipped'.
+      // 'cancelled' isn't part of this forward progression either — no
+      // provider emits it today, it's manual/local-only — so it ranks above
+      // 'complete' here purely so a re-sync can never pull an order back
+      // out of it.
+      const statusRank: Record<string, number> = { inquiry: 0, quoted: 1, in_progress: 2, shipped: 3, complete: 4, cancelled: 5 }
+      const nextStatus = statusRank[o.status] >= (statusRank[existing.status] ?? 0) ? o.status : existing.status
+      const statusChanged = existing.status !== nextStatus
       if (!totalChanged && !statusChanged) continue
 
       const { error: updErr } = await admin
         .from('orders')
         .update({
-          status: o.status,
+          status: nextStatus,
           suggested_price: o.itemsSubtotal,
           estimated_shipping: o.shippingAndTax,
           shipping_buyer_covered: o.buyerCoversShipping,
