@@ -93,7 +93,7 @@ export default function DashboardPage() {
   const [layout, setLayout] = useState<string[]>(DEFAULT_LAYOUT)
   const [savingLayout, setSavingLayout] = useState(false)
 
-  const fetchOrders = useCallback(async (userId: string) => {
+  const fetchOrders = useCallback(async (userId: string, clientList: ClientOption[]) => {
     const { data } = await supabase
       .from('orders')
       .select('*, clients(name)')
@@ -125,7 +125,7 @@ export default function DashboardPage() {
       // Map order totals to client revenue (cancelled orders never billed)
       ordersData.filter(o => o.status !== 'cancelled').forEach(o => {
         const clientName = o.client_id
-          ? (clients.find(c => c.id === o.client_id)?.name || 'Unassigned')
+          ? (clientList.find(c => c.id === o.client_id)?.name || 'Unassigned')
           : 'Unassigned'
         const amt = orderTotals[o.id] || 0
         revenueByClient[clientName] = (revenueByClient[clientName] || 0) + amt
@@ -142,7 +142,7 @@ export default function DashboardPage() {
     invoiceList.forEach(inv => {
       const order = ordersData.find(o => o.id === inv.order_id)
       const clientName = order?.client_id
-        ? (clients.find(c => c.id === order.client_id)?.name || 'Unassigned')
+        ? (clientList.find(c => c.id === order.client_id)?.name || 'Unassigned')
         : 'Unassigned'
       invoiceCountByClient[clientName] = (invoiceCountByClient[clientName] || 0) + 1
     })
@@ -158,7 +158,7 @@ export default function DashboardPage() {
       .slice(0, 5)
       .map(([name, count]) => ({ name, count }))
     )
-  }, [clients])
+  }, [])
 
   useEffect(() => {
     const init = async () => {
@@ -186,7 +186,7 @@ export default function DashboardPage() {
       setLayout(data?.dashboard_layout || DEFAULT_LAYOUT)
       setClients(clientData || [])
       setLowStockItems(((inventory || []) as LowStockItem[]).filter(isLowStock))
-      await fetchOrders(user.id)
+      await fetchOrders(user.id, clientData || [])
       setLoading(false)
     }
     init()
@@ -754,7 +754,7 @@ export default function DashboardPage() {
         <NewOrderModal
           userId={profile.id}
           onClose={() => setShowModal(false)}
-          onCreated={() => fetchOrders(profile.id)}
+          onCreated={() => fetchOrders(profile.id, clients)}
         />
       )}
     </div>
