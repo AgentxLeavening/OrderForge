@@ -199,6 +199,16 @@ export default function DashboardPage() {
 
     const newStatus = destination.droppableId
 
+    // Complete and Cancelled are both one-way doors once dropped: a synced
+    // marketplace order never automatically moves out of either again (see
+    // syncProviderOrders' status-rank guard in lib/integrations/sync.ts), so
+    // an accidental drag here sticks until manually fixed. Confirm first.
+    if (newStatus === 'complete') {
+      if (!confirm('Mark this order as Complete?\n\nFuture marketplace syncs won\'t move it out of Complete automatically — you\'ll need to drag it back yourself if that\'s wrong.')) return
+    } else if (newStatus === 'cancelled') {
+      if (!confirm('Cancel this order?\n\nThis restocks any materials it deducted, and future marketplace syncs won\'t move it out of Cancelled automatically.')) return
+    }
+
     // Optimistic update
     setOrders(prev =>
       prev.map(o => o.id === draggableId ? { ...o, status: newStatus } : o)
