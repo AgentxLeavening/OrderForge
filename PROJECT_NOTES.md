@@ -226,6 +226,17 @@ extra lookup call since the domain's already known at connect time).
   (compares stored vs. fetched, updates order-level fields only) but
   deliberately never touches line items on an update — those can be manually
   edited (the quantity editor), so a re-sync must not risk clobbering that.
+- **Imported orders are titled after what sold**, not the order number
+  (2026-09-09) — the first product line item's description, plus
+  `+N more` when there are several. The dashboard kanban card shows that
+  title with the order number underneath, so a glance says "Resin dice set"
+  rather than "eBay order 12-34567-89012". Applies to all providers.
+  A re-sync **backfills** orders imported before this, but only where the
+  stored title is still character-for-character the old auto-generated
+  `<Provider> order <id>` — a renamed order is left alone, same
+  never-clobber-a-manual-edit rule the line items follow. Backfill only
+  reaches orders inside each provider's fetch window (eBay: 90 days;
+  Etsy: most recent 100 receipts), so anything older keeps its old title.
 - New env vars documented inline in `.env.local`: `ETSY_CLIENT_ID`,
   `ETSY_REDIRECT_URI`, `ETSY_SHARED_SECRET`, `EBAY_CLIENT_ID`,
   `EBAY_CLIENT_SECRET`, `EBAY_REDIRECT_URI`, `EBAY_ENV`,
@@ -367,14 +378,14 @@ Steps, in order:
    real orders import — arriving as **Shipped**, which is expected: the
    90-day lookback window mostly contains already-fulfilled orders and
    `FULFILLED` maps to `'shipped'` by design.
-   - **Still outstanding**: nobody has yet compared an imported order's
-     money against eBay's own figures. Field *names* are confirmed against
-     the API schema (see Known debt), but confirm on a real order that
-     items subtotal + the synthetic "Shipping & tax" line equals the order
-     total the buyer paid. A `0.00` shipping/tax line on an order that
-     definitely had shipping means `pricingSummary.total` isn't resolving
-     and the gap is being swallowed as pure profit — the exact bug that hit
-     Etsy.
+   - **Money spot-checked 2026-09-09**: a handful of imported orders were
+     compared against eBay's own figures and the amounts looked right —
+     items subtotal plus the synthetic "Shipping & tax" line reconciling to
+     what the buyer paid. Not an exhaustive audit, so if a margin ever looks
+     too good on an eBay order, check that line first: a `0.00` shipping/tax
+     value on an order that definitely had shipping means
+     `pricingSummary.total` isn't resolving and the gap is being swallowed
+     as pure profit — the exact bug that hit Etsy.
    - **Watch out for a stale Sandbox connection row.** If eBay was ever
      connected from the production site under Sandbox credentials, the
      `marketplace_connections` row still holds that Sandbox token; after the

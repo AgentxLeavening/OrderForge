@@ -113,12 +113,27 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
     let updated = 0
     for (const o of normalizedOrders) {
       const orderNumber = `${provider.id.toUpperCase()}-${o.externalOrderId}`.slice(0, 32)
-      const primaryItemDesc = o.items.find(it => it.itemType !== 'shipping')?.description
+      const productItems = o.items.filter(it => it.itemType !== 'shipping')
+      const primaryItemDesc = productItems[0]?.description
       const matchedProductId = primaryItemDesc ? productIdByName.get(primaryItemDesc.trim().toLowerCase()) ?? null : null
+
+      // Title the order after what was actually sold, so the dashboard card
+      // reads "Resin dice set" rather than "eBay order 12-34567-89012" — the
+      // order number is still shown underneath it on the card. Falls back to
+      // the old provider+id form only when an order somehow has no product
+      // line items (that fallback string is also what the backfill below
+      // recognises as "never renamed by the seller", so keep the two in sync).
+      const fallbackTitle = `${provider.label} order ${o.externalOrderId}`
+      const extraItemCount = productItems.length - 1
+      const importedTitle = !primaryItemDesc?.trim()
+        ? fallbackTitle
+        : extraItemCount > 0
+          ? `${primaryItemDesc.trim()} +${extraItemCount} more`
+          : primaryItemDesc.trim()
 
       const { data: existing } = await admin
         .from('orders')
-        .select('id, status, suggested_price, estimated_shipping')
+        .select('id, title, status, suggested_price, estimated_shipping')
         .eq('user_id', userId)
         .eq('external_source', provider.id)
         .eq('external_order_id', o.externalOrderId)
@@ -129,7 +144,7 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
           .from('orders')
           .insert({
             user_id: userId,
-            title: `${provider.label} order ${o.externalOrderId}`,
+            title: importedTitle,
             type: 'other',
             status: o.status,
             order_number: orderNumber,
@@ -199,7 +214,15 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
       const statusRank: Record<string, number> = { inquiry: 0, quoted: 1, in_progress: 2, shipped: 3, complete: 4, cancelled: 5 }
       const nextStatus = statusRank[o.status] >= (statusRank[existing.status] ?? 0) ? o.status : existing.status
       const statusChanged = existing.status !== nextStatus
-      if (!totalChanged && !statusChanged) continue
+
+      // One-time backfill for orders imported before titles used the item
+      // name. Only rewrites a title that is still character-for-character the
+      // old auto-generated "<Provider> order <id>" — anything else means the
+      // seller renamed it, and a re-sync must never clobber a manual edit
+      // (same rule the line items follow above).
+      const titleChanged = existing.title === fallbackTitle && importedTitle !== fallbackTitle
+
+      if (!totalChanged && !statusChanged && !titleChanged) continue
 
       const { error: updErr } = await admin
         .from('orders')
@@ -210,6 +233,7 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
           shipping_buyer_covered: o.buyerCoversShipping,
           buyer_name: o.buyerName,
           updated_at: new Date().toISOString(),
+          ...(titleChanged ? { title: importedTitle } : {}),
         })
         .eq('id', existing.id)
 
