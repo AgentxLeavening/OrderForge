@@ -154,11 +154,17 @@ actually showed (training knowledge was wrong on these specifics):
   described above; got it wrong on the first pass, fixed after real numbers
   showed shipping reading as pure profit).
 
+**eBay: LIVE ON PRODUCTION 2026-09-09** — connected with a real seller
+account and real orders importing; see the production launch checklist below
+for how it was set up and what's still worth confirming. Field mapping
+(`pricingSummary`, `lineItemCost`, `orderFulfillmentStatus`) has since been
+checked against the Fulfillment API schema and is correct. The rest of this
+section is the earlier Sandbox history, kept because its findings still hold.
+
 **eBay: connect + sync structurally verified 2026-09-04** (Sandbox credentials,
 shop "like-gravy" seller test user) — OAuth connect/callback, token exchange,
 and the account-lookup + orders-fetch API calls all confirmed working
-end-to-end. **Order field mapping (`pricingSummary`, `lineItemCost`,
-`orderFulfillmentStatus`) is still unverified** — blocked on getting a real
+end-to-end. Order field mapping was unverified at that point — blocked on a real
 Sandbox test order created (hit an eBay-side Sandbox listing issue, a
 "Shipping method" dropdown with no values, seemingly a Sandbox outage rather
 than our config — parked, pick back up later). Real findings from what *did*
@@ -347,35 +353,36 @@ Steps, in order:
 4. **DONE (portal, 2026-09-09)**: Endpoint URL + verification token entered
    under Alerts & Notifications → Marketplace Account Deletion; eBay's live
    verification passed and the config saved.
-5. **TODO (Vercel env vars, then redeploy)**: Set production
-   `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_REDIRECT_URI` (the prod
-   RuName, an identifier — NOT the callback URL, which goes in that
+5. **DONE (Vercel, 2026-09-09)**: Production `EBAY_CLIENT_ID` /
+   `EBAY_CLIENT_SECRET` / `EBAY_REDIRECT_URI` set and `EBAY_ENV` cleared.
+   The RuName is an identifier — NOT the callback URL, which goes in that
    RuName's "Accepted URL" field in the portal, pointing at
-   `https://orderforge-eight.vercel.app/api/integrations/ebay/callback`).
-   Make sure `EBAY_ENV` is **not** `sandbox` on Vercel (unset it, or set to
-   anything else — `lib/integrations/ebay.ts` only branches on
-   `EBAY_ENV === 'sandbox'`). Keep `.env.local` on Sandbox for local dev —
-   don't overwrite it.
-6. **TODO (live test)**: Temporarily flip `ebay` back into
-   `VISIBLE_PROVIDERS` in `app/dashboard/settings/page.tsx`, deploy, connect
-   with a real eBay seller account on the production site, hit "Sync now",
-   and confirm at least one real order imports with correct fields —
-   `pricingSummary`/`lineItemCost`/`orderFulfillmentStatus` mapping in
-   `fetchOrdersSince` is still flagged UNVERIFIED (blocked previously on a
-   Sandbox listing bug, never confirmed against a real response). Needs an
-   actual real order to exist on that seller account; place a low-value one
-   if none is already sitting there.
+   `https://orderforge-eight.vercel.app/api/integrations/ebay/callback`.
+   `.env.local` deliberately stays on Sandbox for local dev.
+   Took three attempts; see the gotchas above — each var was wrong in turn
+   (`EBAY_CLIENT_ID` still Sandbox, then no production RuName existed at
+   all), and each fix needed its own redeploy.
+6. **DONE (live test, 2026-09-09)**: `ebay` is in `VISIBLE_PROVIDERS`,
+   connect succeeded with a real seller account on the production site, and
+   real orders import — arriving as **Shipped**, which is expected: the
+   90-day lookback window mostly contains already-fulfilled orders and
+   `FULFILLED` maps to `'shipped'` by design.
+   - **Still outstanding**: nobody has yet compared an imported order's
+     money against eBay's own figures. Field *names* are confirmed against
+     the API schema (see Known debt), but confirm on a real order that
+     items subtotal + the synthetic "Shipping & tax" line equals the order
+     total the buyer paid. A `0.00` shipping/tax line on an order that
+     definitely had shipping means `pricingSummary.total` isn't resolving
+     and the gap is being swallowed as pure profit — the exact bug that hit
+     Etsy.
    - **Watch out for a stale Sandbox connection row.** If eBay was ever
      connected from the production site under Sandbox credentials, the
      `marketplace_connections` row still holds that Sandbox token; after the
      env flip Settings will show "Connected" while every sync 401s against
      the production API. Disconnect and reconnect rather than debugging the
      sync path.
-7. Once (6) confirms correct field mapping end-to-end, leave `ebay` in
-   `VISIBLE_PROVIDERS` for real and commit. If mapping is wrong, fix
-   `fetchOrdersSince` against the real response shape before re-testing —
-   do not ship guessed field names to real users' order data.
-8. **TODO (cleanup, after 7)**: Regenerate the production Cert ID in the
+7. **DONE**: `ebay` left in `VISIBLE_PROVIDERS` and committed.
+8. **TODO (cleanup)**: Regenerate the production Cert ID in the
    portal and update it on Vercel — the original was pasted into a Claude
    Code session transcript during setup.
 
@@ -423,7 +430,35 @@ Steps, in order:
 - **Shopify: fully verified 2026-09-05** — protected-customer-data step done,
   a real test order synced cleanly with correct field mapping (subtotal,
   line items, buyer). Consider this provider done.
-- eBay: connect + sync API calls verified, but order field mapping still
-  unverified — blocked on a real Sandbox test order (parked, see above).
+- eBay: connect + sync verified live on **production** 2026-09-09 with a real
+  seller account — real orders import. Field names in `fetchOrdersSince` were
+  also checked against the Fulfillment API schema and are correct:
+  `pricingSummary.total` and `lineItems[].lineItemCost` are both `Amount`
+  objects with a `value`, alongside `title`, `quantity`, `buyer.username`,
+  and `creationDate`.
+- ~~eBay `PARTIALLY_FULFILLED` dead branch~~ — **fixed 2026-09-09.**
+  `orderFulfillmentStatus` only ever returns `NOT_STARTED` | `IN_PROGRESS` |
+  `FULFILLED`, so the guessed `PARTIALLY_FULFILLED` never matched; the check
+  is now `=== 'FULFILLED'`. No behaviour change (a partly-shipped order still
+  falls through to `'in_progress'`, which is correct).
+- **Auto-completing orders on delivery: carrier tracking lookup is the way
+  to do it.** Decided 2026-09-09 to leave imported orders terminating at
+  Shipped for now. No marketplace tells us an order was *delivered* —
+  eBay's `orderFulfillmentStatus` stops at `FULFILLED`, and its
+  `ShippingFulfillment` resource carries only `shipmentTrackingNumber`,
+  `shippedDate`, and `shippingCarrierCode`, with no delivery confirmation
+  anywhere. The rejected alternative was a time-based heuristic (mark
+  Complete N days after shipping), which guesses at status and cuts against
+  the rule this codebase already follows everywhere else — never advance an
+  order's status on assumption (cf. the tracking-number and invoice-quote
+  rules). A wrong "Complete" is worse than an accurate "Shipped", not least
+  because Reports reads off these statuses.
+  The better future option: feed `shipmentTrackingNumber` +
+  `shippingCarrierCode` to a carrier API or an aggregator (EasyPost,
+  Shippo, etc.) and advance to Complete on a real delivered event. That
+  gives actual delivery data rather than a guess, and because
+  `orders.tracking_number` already exists and Etsy/Shopify also expose
+  tracking, it would work across all three providers rather than being an
+  eBay-only feature.
 - TikTok Shop/Facebook: fully unverified, no credentials tested at all yet.
 - Marketplace sync is manual ("Sync now" button) — no scheduled/background sync yet.
