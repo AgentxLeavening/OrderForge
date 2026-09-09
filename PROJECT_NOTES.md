@@ -379,7 +379,43 @@ Steps, in order:
    portal and update it on Vercel — the original was pasted into a Claude
    Code session transcript during setup.
 
+### Gotchas hit during this rollout (2026-09-09)
+- **Vercel bakes env vars at build time.** Saving a variable does nothing to
+  the running deployment — every env change needs a fresh redeploy. Cost a
+  round trip here.
+- **eBay's OAuth errors are misleading, but they do localise the fault**, and
+  the same two errors mean different things depending on which host you land
+  on (check the hostname on the `auth2.*.ebay.com/oauth2/errorOauth` page):
+  - `unauthorized_client` / "The OAuth client was not found" = the client ID
+    doesn't exist on that eBay environment, i.e. `EBAY_CLIENT_ID` and
+    `EBAY_ENV` disagree. Landing on `auth2.ebay.com` means the ID is still
+    the Sandbox one; `auth2.sandbox.ebay.com` means `EBAY_ENV` is still
+    `sandbox`.
+  - `temporarily_unavailable` / "authorization server is currently unable to
+    handle the request" = **not an outage**. With a valid client ID it means
+    the `redirect_uri` isn't a RuName belonging to that keyset (verified: a
+    Sandbox RuName, a raw callback URL, and a bogus string all produce it).
+  - Useful trick: probing `https://auth.ebay.com/oauth2/authorize?...` with
+    `curl -sL` and reading the final `errorOauth?errorId=` URL diagnoses
+    these from the terminal without a deploy cycle.
+- **A production keyset does not inherit the Sandbox RuName** — it has to be
+  created separately under Application Keys → Production → User tokens →
+  "Get a Token from eBay via Your Application". Its form requires a **privacy
+  policy URL**, which is why `app/privacy/page.tsx` exists.
+
 ## Known debt / follow-ups
+- **eBay account deletion notifications are acknowledged but not acted on —
+  blocker for onboarding any user other than the developer.**
+  `app/api/integrations/ebay/deletion/route.ts` returns 200 and logs, without
+  scrubbing anything. That is currently defensible only because the sole user
+  is the app's owner and the only third-party PII stored is a buyer display
+  name (`lib/integrations/ebay.ts` maps `o.buyer?.username` → `buyerName` on
+  imported orders). Once real sellers connect, those usernames belong to
+  strangers across many accounts, and eBay's Marketplace Account Deletion
+  policy requires actually deleting them on notification. Before a second
+  user is onboarded: implement real deletion keyed off
+  `notification.data.username` / `userId`, and re-check whether
+  `app/privacy/page.tsx` still describes what is stored.
 - Pre-existing ESLint errors (`no-explicit-any`, some react-hooks rules) — **non-blocking**,
   the Turbopack build does not fail on them.
 - One historical order `ORD-880512` has a `suggested_price` ($15) but no line item —
