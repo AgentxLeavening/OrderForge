@@ -312,35 +312,50 @@ even when correctly linked to a product with a full bill of materials.
   considering it done.
 
 ## eBay production launch checklist (started 2026-09-08)
-Goal: get eBay working for real users, not just Sandbox. `ebay` was pulled
-out of Settings' `VISIBLE_PROVIDERS` (uncommitted at time of writing) so no
-one can connect it until this is done. Steps, in order:
+Goal: get eBay working for real users, not just Sandbox. `ebay` is pulled out
+of Settings' `VISIBLE_PROVIDERS` so no one can connect it until this is done.
+Steps, in order:
 
-1. **DONE (code)**: `app/api/integrations/ebay/deletion/route.ts` — eBay
-   requires a working Marketplace Account Deletion/Closure notification
+1. **DONE (code, 2026-09-08)**: `app/api/integrations/ebay/deletion/route.ts` —
+   eBay requires a working Marketplace Account Deletion/Closure notification
    endpoint before it'll keep a **Production** keyset active for any OAuth
    scope that reads user data (ours: `sell.fulfillment`). Not needed for
    Sandbox, which is why nothing broke before now. GET does the
    challenge/response handshake eBay validates live when you save the
    portal config; POST just acknowledges (we don't retain buyer PII beyond
    a username today — see the file's comments).
-2. **TODO (portal, developer.ebay.com)**: Create a **Production** keyset on
-   the existing app (separate from the Sandbox one already in `.env.local`)
-   — Client ID, Client Secret ("Cert ID"), and a production RuName with its
-   Accepted URL set to `https://orderforge-eight.vercel.app/api/integrations/ebay/callback`.
-3. **TODO (Vercel env vars, then redeploy)**: Set
-   `EBAY_DELETION_ENDPOINT_URL` and `EBAY_DELETION_VERIFICATION_TOKEN`
-   (generate the token yourself) — needed *before* step 4, since the portal
-   checks the live endpoint on save.
-4. **TODO (portal)**: Enter the endpoint URL + token from step 3 into
-   Alerts & Notifications → Marketplace Account Deletion. Must pass eBay's
-   live verification to save.
+2. **DONE (portal, 2026-09-09)**: Production keyset created on the existing
+   app, separate from the Sandbox one still in `.env.local`. Production
+   Client ID is `TylerLea-OrderFor-PRD-c82b86fbd-5d34dc68`; the Cert ID
+   lives only in Vercel. Verified live via a `client_credentials` grant
+   against `https://api.ebay.com/identity/v1/oauth2/token` — HTTP 200,
+   Application Access Token issued, so the pair is correct and the keyset
+   is active (eBay disables non-compliant production keysets, so a 200
+   here is also a compliance signal). **That check only exercises the
+   basic `api_scope`** — it proves nothing about `sell.fulfillment`
+   consent or the RuName, both of which need a real OAuth round trip.
+   Handy as a first triage step if eBay breaks later: if
+   `client_credentials` still 200s, the keyset is fine and the problem is
+   scope/RuName/token-storage, not credentials.
+3. **DONE (Vercel, 2026-09-09)**: `EBAY_DELETION_ENDPOINT_URL` and
+   `EBAY_DELETION_VERIFICATION_TOKEN` set on Production and redeployed.
+   Verified by computing sha256(challenge + token + endpointUrl) locally
+   and diffing it against what the live endpoint returned for a fresh
+   challenge code — exact match, HTTP 200. POST also confirmed returning
+   200 for both a well-formed notification body and an empty body (a 500
+   on the empty case would make eBay retry forever).
+4. **DONE (portal, 2026-09-09)**: Endpoint URL + verification token entered
+   under Alerts & Notifications → Marketplace Account Deletion; eBay's live
+   verification passed and the config saved.
 5. **TODO (Vercel env vars, then redeploy)**: Set production
    `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_REDIRECT_URI` (the prod
-   RuName from step 2) and make sure `EBAY_ENV` is **not** `sandbox` on
-   Vercel (unset it, or set to anything else — `lib/integrations/ebay.ts`
-   only branches on `EBAY_ENV === 'sandbox'`). Keep `.env.local` on Sandbox
-   for local dev — don't overwrite it.
+   RuName, an identifier — NOT the callback URL, which goes in that
+   RuName's "Accepted URL" field in the portal, pointing at
+   `https://orderforge-eight.vercel.app/api/integrations/ebay/callback`).
+   Make sure `EBAY_ENV` is **not** `sandbox` on Vercel (unset it, or set to
+   anything else — `lib/integrations/ebay.ts` only branches on
+   `EBAY_ENV === 'sandbox'`). Keep `.env.local` on Sandbox for local dev —
+   don't overwrite it.
 6. **TODO (live test)**: Temporarily flip `ebay` back into
    `VISIBLE_PROVIDERS` in `app/dashboard/settings/page.tsx`, deploy, connect
    with a real eBay seller account on the production site, hit "Sync now",
@@ -350,10 +365,19 @@ one can connect it until this is done. Steps, in order:
    Sandbox listing bug, never confirmed against a real response). Needs an
    actual real order to exist on that seller account; place a low-value one
    if none is already sitting there.
+   - **Watch out for a stale Sandbox connection row.** If eBay was ever
+     connected from the production site under Sandbox credentials, the
+     `marketplace_connections` row still holds that Sandbox token; after the
+     env flip Settings will show "Connected" while every sync 401s against
+     the production API. Disconnect and reconnect rather than debugging the
+     sync path.
 7. Once (6) confirms correct field mapping end-to-end, leave `ebay` in
    `VISIBLE_PROVIDERS` for real and commit. If mapping is wrong, fix
    `fetchOrdersSince` against the real response shape before re-testing —
    do not ship guessed field names to real users' order data.
+8. **TODO (cleanup, after 7)**: Regenerate the production Cert ID in the
+   portal and update it on Vercel — the original was pasted into a Claude
+   Code session transcript during setup.
 
 ## Known debt / follow-ups
 - Pre-existing ESLint errors (`no-explicit-any`, some react-hooks rules) — **non-blocking**,
