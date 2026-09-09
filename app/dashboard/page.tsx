@@ -552,7 +552,12 @@ export default function DashboardPage() {
         {COLUMNS.map(col => {
           const colOrders = filteredOrders.filter(o => o.status === col.key)
           return (
-            <div key={col.key} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+            // flex column + a flex-1 Droppable below, so the drop target fills
+            // the whole column instead of hugging its cards. Grid items stretch
+            // to the tallest column, so without this a short column (Complete)
+            // renders tall but only accepts drops in the top few inches —
+            // impossible to use once a long column (Shipped) sets the height.
+            <div key={col.key} className="bg-gray-900 border border-gray-800 rounded-2xl p-4 flex flex-col">
               {/* Column Header */}
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-white font-semibold">{col.label}</h2>
@@ -567,7 +572,7 @@ export default function DashboardPage() {
                   <div
                     ref={provided.innerRef}
                     {...provided.droppableProps}
-                    className={`space-y-3 min-h-24 rounded-xl transition ${
+                    className={`space-y-3 min-h-24 flex-1 rounded-xl transition ${
                       snapshot.isDraggingOver ? 'bg-indigo-500/10 border border-indigo-500/30' : ''
                     }`}
                   >
