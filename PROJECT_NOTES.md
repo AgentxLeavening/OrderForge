@@ -311,6 +311,50 @@ even when correctly linked to a product with a full bill of materials.
   same live-order test against `https://orderforge-eight.vercel.app` before
   considering it done.
 
+## eBay production launch checklist (started 2026-09-08)
+Goal: get eBay working for real users, not just Sandbox. `ebay` was pulled
+out of Settings' `VISIBLE_PROVIDERS` (uncommitted at time of writing) so no
+one can connect it until this is done. Steps, in order:
+
+1. **DONE (code)**: `app/api/integrations/ebay/deletion/route.ts` — eBay
+   requires a working Marketplace Account Deletion/Closure notification
+   endpoint before it'll keep a **Production** keyset active for any OAuth
+   scope that reads user data (ours: `sell.fulfillment`). Not needed for
+   Sandbox, which is why nothing broke before now. GET does the
+   challenge/response handshake eBay validates live when you save the
+   portal config; POST just acknowledges (we don't retain buyer PII beyond
+   a username today — see the file's comments).
+2. **TODO (portal, developer.ebay.com)**: Create a **Production** keyset on
+   the existing app (separate from the Sandbox one already in `.env.local`)
+   — Client ID, Client Secret ("Cert ID"), and a production RuName with its
+   Accepted URL set to `https://orderforge-eight.vercel.app/api/integrations/ebay/callback`.
+3. **TODO (Vercel env vars, then redeploy)**: Set
+   `EBAY_DELETION_ENDPOINT_URL` and `EBAY_DELETION_VERIFICATION_TOKEN`
+   (generate the token yourself) — needed *before* step 4, since the portal
+   checks the live endpoint on save.
+4. **TODO (portal)**: Enter the endpoint URL + token from step 3 into
+   Alerts & Notifications → Marketplace Account Deletion. Must pass eBay's
+   live verification to save.
+5. **TODO (Vercel env vars, then redeploy)**: Set production
+   `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_REDIRECT_URI` (the prod
+   RuName from step 2) and make sure `EBAY_ENV` is **not** `sandbox` on
+   Vercel (unset it, or set to anything else — `lib/integrations/ebay.ts`
+   only branches on `EBAY_ENV === 'sandbox'`). Keep `.env.local` on Sandbox
+   for local dev — don't overwrite it.
+6. **TODO (live test)**: Temporarily flip `ebay` back into
+   `VISIBLE_PROVIDERS` in `app/dashboard/settings/page.tsx`, deploy, connect
+   with a real eBay seller account on the production site, hit "Sync now",
+   and confirm at least one real order imports with correct fields —
+   `pricingSummary`/`lineItemCost`/`orderFulfillmentStatus` mapping in
+   `fetchOrdersSince` is still flagged UNVERIFIED (blocked previously on a
+   Sandbox listing bug, never confirmed against a real response). Needs an
+   actual real order to exist on that seller account; place a low-value one
+   if none is already sitting there.
+7. Once (6) confirms correct field mapping end-to-end, leave `ebay` in
+   `VISIBLE_PROVIDERS` for real and commit. If mapping is wrong, fix
+   `fetchOrdersSince` against the real response shape before re-testing —
+   do not ship guessed field names to real users' order data.
+
 ## Known debt / follow-ups
 - Pre-existing ESLint errors (`no-explicit-any`, some react-hooks rules) — **non-blocking**,
   the Turbopack build does not fail on them.

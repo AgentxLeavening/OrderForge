@@ -13,6 +13,13 @@ type Connection = {
 }
 
 const ALL_PROVIDERS: ProviderId[] = ['etsy', 'ebay', 'shopify', 'tiktok', 'facebook']
+// Only providers a real seller can actually connect and sync today.
+// eBay's code path works but is only exercised against eBay Sandbox (no
+// production app credentials yet); TikTok Shop and Facebook & Instagram
+// Shop are unverified scaffolding. Kept out of the connections list so a
+// tester isn't invited to connect something that won't work — flip a
+// provider back in here once it's actually ready.
+const VISIBLE_PROVIDERS: ProviderId[] = ['etsy', 'shopify']
 const PROVIDER_LABELS: Record<string, string> = {
   etsy: 'Etsy',
   ebay: 'eBay',
@@ -202,7 +209,7 @@ export default function SettingsPage() {
             <p className="text-gray-500 text-sm">Loading…</p>
           ) : (
             <div className="space-y-3">
-              {ALL_PROVIDERS.map(provider => {
+              {VISIBLE_PROVIDERS.map(provider => {
                 const conn = connections.find(c => c.provider === provider)
                 const isShopify = provider === 'shopify'
 
