@@ -14,12 +14,15 @@ type Connection = {
 
 const ALL_PROVIDERS: ProviderId[] = ['etsy', 'ebay', 'shopify', 'tiktok', 'facebook']
 // Only providers a real seller can actually connect and sync today.
-// eBay's code path works but is only exercised against eBay Sandbox (no
-// production app credentials yet); TikTok Shop and Facebook & Instagram
-// Shop are unverified scaffolding. Kept out of the connections list so a
-// tester isn't invited to connect something that won't work — flip a
-// provider back in here once it's actually ready.
-const VISIBLE_PROVIDERS: ProviderId[] = ['etsy', 'shopify']
+// TikTok Shop and Facebook & Instagram Shop are unverified scaffolding —
+// kept out of the connections list so a tester isn't invited to connect
+// something that won't work. Flip a provider back in here once it's
+// actually ready.
+// eBay went in 2026-09-09: production keyset and Marketplace Account
+// Deletion compliance are both done, but its order field mapping in
+// lib/integrations/ebay.ts `fetchOrdersSince` is still being confirmed
+// against a real order — see the checklist in PROJECT_NOTES.md.
+const VISIBLE_PROVIDERS: ProviderId[] = ['etsy', 'ebay', 'shopify']
 const PROVIDER_LABELS: Record<string, string> = {
   etsy: 'Etsy',
   ebay: 'eBay',
