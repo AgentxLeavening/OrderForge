@@ -1,4 +1,5 @@
 import type { MarketplaceProvider, NormalizedOrder, ShopInfo, TokenSet } from './types'
+import { currentYearStartISO } from './syncWindow'
 
 // Shopify Admin API, OAuth 2.0 (authorization code grant). UNVERIFIED — no
 // Shopify credentials tested yet, built from Shopify's documented flow:
@@ -86,13 +87,35 @@ export const shopifyProvider: MarketplaceProvider = {
     // which persists it as external_shop_id immediately, so this is always
     // populated by the time sync.ts calls in — no lazy fetchShopInfo needed).
     if (!shopId) throw new Error('Shopify order fetch requires a shop domain.')
-    const params = new URLSearchParams({ status: 'any', limit: '100', order: 'created_at desc' })
-    const res = await fetch(`https://${shopId}/admin/api/${API_VERSION}/orders.json?${params.toString()}`, {
-      headers: { 'X-Shopify-Access-Token': accessToken },
+    // Deliberately NOT filtering by sinceISO — same reasoning as Etsy/eBay's
+    // fetchOrdersSince: a narrower filter would hide status changes on
+    // orders already imported earlier this year. created_at_min below is
+    // the fixed since-Jan-1 window instead (see currentYearStartISO).
+    const params = new URLSearchParams({
+      status: 'any',
+      limit: '100',
+      order: 'created_at desc',
+      created_at_min: currentYearStartISO(),
     })
-    if (!res.ok) throw new Error(`Shopify orders fetch failed: ${res.status} ${await res.text()}`)
-    const json = await res.json()
-    const orders = (json.orders || []) as any[]
+
+    let url: string | null = `https://${shopId}/admin/api/${API_VERSION}/orders.json?${params.toString()}`
+    const orders: any[] = []
+    // Capped well above what a small shop could generate in a year — a
+    // safety net against an unbounded loop, not a real limit in practice.
+    for (let page = 0; url && page < 20; page++) {
+      const res: Response = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken } })
+      if (!res.ok) throw new Error(`Shopify orders fetch failed: ${res.status} ${await res.text()}`)
+      const json = await res.json()
+      orders.push(...((json.orders || []) as any[]))
+
+      // Cursor pagination: Shopify hands back the full next-page URL (with
+      // its own page_info token) in a Link header — follow it verbatim
+      // rather than reconstructing params, since a page_info request isn't
+      // allowed to carry the original filters alongside it.
+      const link = res.headers.get('Link') || res.headers.get('link')
+      const next = link?.split(',').map(s => s.trim()).find(s => s.endsWith('rel="next"'))
+      url = next?.match(/<([^>]+)>/)?.[1] || null
+    }
 
     return orders.map((o): NormalizedOrder => {
       const items: NormalizedOrder['items'] = (o.line_items || []).map((li: any) => ({

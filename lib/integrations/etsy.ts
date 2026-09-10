@@ -1,4 +1,5 @@
 import type { MarketplaceProvider, NormalizedOrder, ShopInfo, TokenSet } from './types'
+import { currentYearStartISO } from './syncWindow'
 
 // Etsy Open API v3, OAuth 2.0 + PKCE. Reference: https://developer.etsy.com/documentation/essentials/authentication
 // Confirmed live 2026-09-03 against a real (freshly-approved) app:
@@ -108,21 +109,29 @@ export const etsyProvider: MarketplaceProvider = {
   },
 
   async fetchOrdersSince({ accessToken, shopId }): Promise<NormalizedOrder[]> {
-    // Deliberately NOT filtering by sinceISO/min_created: Etsy's receipts
-    // endpoint filters on creation date, not last-modified, so an
-    // already-imported order that just shipped wouldn't show up in a
-    // creation-date-filtered window for sync.ts to notice the status
-    // change. Instead, re-check the most recent 100 receipts every sync —
-    // sync.ts skips ones that are unchanged, so this only costs an API call,
-    // not writes, and is cheap at small-shop scale.
-    const params = new URLSearchParams({ limit: '100' })
-
-    const res = await fetch(`${API_BASE}/shops/${shopId}/receipts?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${accessToken}`, 'x-api-key': apiKeyHeader() },
-    })
-    if (!res.ok) throw new Error(`Etsy receipts fetch failed: ${res.status} ${await res.text()}`)
-    const json = await res.json()
-    const receipts = (json.results || []) as any[]
+    // Deliberately NOT filtering by sinceISO: Etsy's receipts endpoint
+    // filters on creation date, not last-modified, so an already-imported
+    // order that just shipped wouldn't show up in a window scoped to
+    // *recent syncs* for sync.ts to notice the status change. min_created
+    // below is a much wider, fixed window instead (since Jan 1 — see
+    // currentYearStartISO), re-checked in full every sync; sync.ts skips
+    // receipts that are unchanged, so this only costs API calls, not writes.
+    const minCreated = Math.floor(new Date(currentYearStartISO()).getTime() / 1000)
+    const limit = 100
+    const receipts: any[] = []
+    // Capped well above what a small shop could generate in a year — a
+    // safety net against an unbounded loop, not a real limit in practice.
+    for (let offset = 0; offset < 2000; offset += limit) {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset), min_created: String(minCreated) })
+      const res = await fetch(`${API_BASE}/shops/${shopId}/receipts?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${accessToken}`, 'x-api-key': apiKeyHeader() },
+      })
+      if (!res.ok) throw new Error(`Etsy receipts fetch failed: ${res.status} ${await res.text()}`)
+      const json = await res.json()
+      const page = (json.results || []) as any[]
+      receipts.push(...page)
+      if (page.length < limit) break
+    }
 
     // Money fields confirmed live 2026-09-03 against a real receipt:
     // subtotal + total_shipping_cost + total_tax_cost + total_vat_cost +
