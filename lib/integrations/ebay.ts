@@ -1,4 +1,5 @@
 import type { MarketplaceProvider, NormalizedOrder, ShopInfo, TokenSet } from './types'
+import { currentYearStartISO } from './syncWindow'
 
 // eBay OAuth 2.0 (Authorization Code Grant, user-level token) + Fulfillment
 // API. Reference: https://developer.ebay.com/api-docs/static/oauth-auth-code-grant.html
@@ -111,20 +112,27 @@ export const ebayProvider: MarketplaceProvider = {
     // Deliberately NOT filtering by sinceISO — same reasoning as Etsy's
     // fetchOrdersSince: a creation-date filter would hide status changes on
     // already-imported orders from sync.ts's update-detection. Re-check a
-    // fixed recent window every sync instead; cheap at small-shop scale.
-    // Confirmed working against real production orders 2026-09-09. Note the
-    // 90-day window means a first sync mostly imports already-FULFILLED
-    // orders, so they land as 'shipped' — that is expected, not a bug.
-    const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
+    // fixed window every sync instead — see currentYearStartISO for why
+    // that window is "since Jan 1" rather than a rolling number of days.
+    // Confirmed working against real production orders 2026-09-09. Note a
+    // first sync mostly imports already-FULFILLED orders from earlier this
+    // year, so they land as 'shipped' — that is expected, not a bug.
+    const since = currentYearStartISO()
     const filters = [`creationdate:[${since}..]`]
     const params = new URLSearchParams({ filter: filters.join(','), limit: '50' })
 
-    const res = await fetch(`${API_HOST}/sell/fulfillment/v1/order?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
-    if (!res.ok) throw new Error(`eBay orders fetch failed: ${res.status} ${await res.text()}`)
-    const json = await res.json()
-    const orders = (json.orders || []) as any[]
+    // eBay paginates via a full `next` URL in the response body rather than
+    // a Link header. Capped at 20 pages (1000 orders) as a safety net
+    // against an unbounded loop, not a real limit for a small shop's year.
+    let url: string | null = `${API_HOST}/sell/fulfillment/v1/order?${params.toString()}`
+    const orders: any[] = []
+    for (let page = 0; url && page < 20; page++) {
+      const res: Response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+      if (!res.ok) throw new Error(`eBay orders fetch failed: ${res.status} ${await res.text()}`)
+      const json: any = await res.json()
+      orders.push(...((json.orders || []) as any[]))
+      url = json.next || null
+    }
 
     return orders.map((o): NormalizedOrder => {
       const items: NormalizedOrder['items'] = (o.lineItems || []).map((li: any) => ({
