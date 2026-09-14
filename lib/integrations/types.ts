@@ -30,6 +30,13 @@ export type NormalizedOrder = {
   shippingAndTax: number
   buyerCoversShipping: boolean
   createdAt: string // ISO
+  // Carrier tracking number, where the provider hands it over in the orders
+  // payload (Etsy's receipt `shipments`, Shopify's order `fulfillments`).
+  // Undefined means "this provider didn't say", NOT "there is none" — eBay
+  // keeps tracking on a separate endpoint, so it arrives via the optional
+  // fetchTrackingNumber hook below instead. sync.ts only ever fills a blank
+  // tracking number in; it never overwrites one already on the order.
+  trackingNumber?: string | null
   items: NormalizedOrderItem[]
 }
 
@@ -61,4 +68,13 @@ export interface MarketplaceProvider {
   refreshAccessToken(refreshToken: string): Promise<TokenSet>
   fetchShopInfo(accessToken: string, shopDomain?: string): Promise<ShopInfo>
   fetchOrdersSince(params: { accessToken: string; shopId: string; sinceISO: string | null }): Promise<NormalizedOrder[]>
+  // Optional, for providers that don't include tracking in the orders payload.
+  // eBay is the only one today: tracking lives on
+  // /order/{orderId}/shipping_fulfillment, so reading it for every order on
+  // every sync would mean an extra API call per order against a shared daily
+  // quota. sync.ts therefore calls this lazily — only for an order that looks
+  // shipped and has no tracking stored yet — so a given order costs one extra
+  // call once, and nothing on subsequent syncs. Returns null when the
+  // marketplace has no tracking for it (common: shipped without tracking).
+  fetchTrackingNumber?(params: { accessToken: string; shopId: string; externalOrderId: string }): Promise<string | null>
 }

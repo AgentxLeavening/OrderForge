@@ -139,10 +139,20 @@ export const shopifyProvider: MarketplaceProvider = {
       const shipped = o.fulfillment_status === 'fulfilled'
       const buyerName = [o.customer?.first_name, o.customer?.last_name].filter(Boolean).join(' ') || o.email || null
 
+      // Tracking rides along on the order's `fulfillments`. The REST API
+      // allows one tracking_number per fulfillment (tracking_numbers is the
+      // multi-package form, GraphQL-only for writes), so check both and take
+      // the first real value — orders.tracking_number holds a single one.
+      const trackingNumber =
+        ((o.fulfillments || []) as any[])
+          .flatMap(f => [f?.tracking_number, ...(f?.tracking_numbers || [])])
+          .find(t => typeof t === 'string' && t.trim()) || null
+
       return {
         externalOrderId: String(o.id),
         buyerName,
         status: shipped ? 'shipped' : 'in_progress',
+        trackingNumber,
         itemsSubtotal,
         shippingAndTax,
         buyerCoversShipping: true,

@@ -133,11 +133,29 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
 
       const { data: existing } = await admin
         .from('orders')
-        .select('id, title, status, suggested_price, estimated_shipping')
+        .select('id, title, status, suggested_price, estimated_shipping, tracking_number')
         .eq('user_id', userId)
         .eq('external_source', provider.id)
         .eq('external_order_id', o.externalOrderId)
         .maybeSingle()
+
+      // Tracking is only ever filled in, never overwritten — the seller can
+      // type one by hand on the order page, and a re-sync must not clobber
+      // that (same rule the line items and the title backfill follow).
+      const storedTracking = (existing?.tracking_number || '').trim()
+      let trackingNumber = storedTracking || (o.trackingNumber || '').trim() || null
+
+      // Providers that don't ship tracking in the orders payload (eBay) expose
+      // it behind an extra per-order call. Only worth spending when the order
+      // looks shipped and we still have nothing — see fetchTrackingNumber's
+      // comment in ebay.ts on why this isn't done for every order every sync.
+      if (!trackingNumber && o.status === 'shipped' && provider.fetchTrackingNumber) {
+        trackingNumber = await provider.fetchTrackingNumber({
+          accessToken,
+          shopId,
+          externalOrderId: o.externalOrderId,
+        })
+      }
 
       if (!existing) {
         const { data: inserted, error: insErr } = await admin
@@ -157,6 +175,7 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
             external_order_id: o.externalOrderId,
             created_at: o.createdAt,
             product_id: matchedProductId,
+            tracking_number: trackingNumber,
           })
           .select('id')
           .single()
@@ -222,7 +241,13 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
       // (same rule the line items follow above).
       const titleChanged = existing.title === fallbackTitle && importedTitle !== fallbackTitle
 
-      if (!totalChanged && !statusChanged && !titleChanged) continue
+      // Tracking typically shows up after the order was first imported — it's
+      // the sync where the order goes shipped that finally has one. Only counts
+      // as a change when the stored value was blank; storedTracking winning
+      // above means a hand-typed number can never be replaced.
+      const trackingChanged = !storedTracking && !!trackingNumber
+
+      if (!totalChanged && !statusChanged && !titleChanged && !trackingChanged) continue
 
       const { error: updErr } = await admin
         .from('orders')
@@ -234,6 +259,7 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
           buyer_name: o.buyerName,
           updated_at: new Date().toISOString(),
           ...(titleChanged ? { title: importedTitle } : {}),
+          ...(trackingChanged ? { tracking_number: trackingNumber } : {}),
         })
         .eq('id', existing.id)
 
