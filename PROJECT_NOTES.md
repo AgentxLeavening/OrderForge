@@ -446,6 +446,48 @@ Steps, in order:
   "Get a Token from eBay via Your Application". Its form requires a **privacy
   policy URL**, which is why `app/privacy/page.tsx` exists.
 
+## Data retention & compliance endpoints (2026-09-14)
+Two forces pull opposite ways: tax law says keep financial records (US IRS
+generally 3 years, 6 if income is understated >25%, hence the folk standard
+of 7; UK 5-6), while GDPR/CPRA say keep personal data no longer than
+necessary and require you to state the period or the criteria. The
+resolution — and the rule the code already follows — is that a **financial
+record and a personal identifier are different data with different clocks**:
+keep the money, drop the name. That's why both compliance endpoints
+anonymise rather than delete orders.
+
+Stated policy now lives on `app/privacy/page.tsx` (7 years for orders/line
+items/invoices; buyer display names until erasure is requested; tokens on
+disconnect; logs 90 days; backups lag briefly). Keep that page and the code
+in step — it is a description of what we actually do, not boilerplate.
+
+**Shopify's three mandatory compliance webhooks** (`customers/data_request`,
+`customers/redact`, `shop/redact`) are implemented at
+`app/api/integrations/shopify/compliance/route.ts`. They are a precondition
+for App Store distribution, not optional. All three share one endpoint and
+are told apart by the `x-shopify-topic` header, so the Partner Dashboard can
+point all three URLs at
+`https://orderforge-eight.vercel.app/api/integrations/shopify/compliance`.
+Differences from eBay's equivalent that are easy to get wrong:
+- Verification is **HMAC-SHA256 over the raw body with the app client
+  secret** (`SHOPIFY_CLIENT_SECRET`), not public-key crypto. Same raw-body
+  trap: parse only after verifying.
+- An invalid HMAC must return **401** — Shopify says so specifically, where
+  eBay's equivalent wants 412.
+- `shop/redact` arrives **48 hours after uninstall**, not at uninstall.
+- `shop/redact` deletes the `marketplace_connections` row (tokens), and
+  deliberately **not** the seller's orders: they signed up with us directly,
+  those rows are their own tax records, and they often predate the Shopify
+  connection. Revisit that reading if it's ever challenged.
+- `customers/redact` matches on `orders_to_redact` (Shopify order ids =
+  our `external_order_id`), scoped to the shop's user — an order id is only
+  unique within a shop. Email is an exact-match fallback; deliberately no
+  fuzzy name matching, which could erase the wrong person.
+- `customers/data_request` currently gathers and logs; there's no
+  seller-facing view of requests yet. Shopify allows 30 days, so this is
+  inside the rules, but surface it in the UI when there's somewhere to put
+  it.
+
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —
   **implemented 2026-09-14**, no longer a blocker for onboarding other users.

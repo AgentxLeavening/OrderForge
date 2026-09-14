@@ -109,11 +109,48 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section title="Keeping and deleting data">
+        <Section title="How long we keep things">
           <p>
-            Your records are kept for as long as your account exists. You can delete
-            individual orders, customers, and inventory at any time from within the app,
-            and disconnecting a marketplace removes its stored access token immediately.
+            Different information is kept for different lengths of time, because it is
+            held for different reasons. In short: we keep the figures, and we let go of
+            the names.
+          </p>
+          <dl className="border border-gray-800 rounded-lg divide-y divide-gray-800">
+            {[
+              [
+                'Orders, line items and invoices',
+                'Seven years after the end of the tax year they fall in. These are accounting records, and tax authorities expect them to be available for several years. They contain amounts, dates and item names — not personal details.',
+              ],
+              [
+                'A buyer’s marketplace display name',
+                'While your account is open, or until the marketplace tells us that person asked to be erased — whichever comes first. We act on those requests automatically, and the order stays with the name removed.',
+              ],
+              [
+                'Customers you enter yourself',
+                'While your account is open. You can delete any of them from within the app at any time.',
+              ],
+              [
+                'Marketplace access tokens',
+                'Deleted the moment you disconnect that marketplace, or when a marketplace tells us the connection has ended.',
+              ],
+              [
+                'Your account',
+                'Until you ask us to close it. Ask for an export first if you want to keep your records.',
+              ],
+              [
+                'Technical logs',
+                'Up to 90 days. These record that something happened, not who it happened to.',
+              ],
+            ].map(([label, detail]) => (
+              <div key={label} className="px-4 py-3">
+                <dt className="text-gray-300 text-sm font-medium">{label}</dt>
+                <dd className="text-gray-400 text-sm mt-1">{detail}</dd>
+              </div>
+            ))}
+          </dl>
+          <p>
+            Deleted information can survive in encrypted backups for a short period after
+            it disappears from the app, until those backups age out on their normal cycle.
           </p>
           <p>
             To delete your account and everything in it, email us at{' '}
