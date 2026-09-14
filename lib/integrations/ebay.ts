@@ -108,6 +108,38 @@ export const ebayProvider: MarketplaceProvider = {
     return { externalShopId: 'ebay-account', externalShopName: null }
   },
 
+  // eBay is the one provider that doesn't put tracking in the orders payload:
+  // Order carries `fulfillmentHrefs` pointing at
+  // /order/{orderId}/shipping_fulfillment, which is where
+  // shipmentTrackingNumber and shippingCarrierCode actually live (confirmed
+  // against the Fulfillment API schema 2026-09-14). Reading that for every
+  // order on every sync would be an extra call per order against a shared
+  // daily quota, so sync.ts calls this only for an order that looks shipped
+  // and has no tracking stored yet — once per order, not once per sync.
+  //
+  // A shipped order legitimately may have no tracking (seller shipped without
+  // it), and this is a nice-to-have enrichment rather than the point of the
+  // sync, so failures return null instead of throwing: one unavailable
+  // fulfillment must not fail the whole import.
+  async fetchTrackingNumber({ accessToken, externalOrderId }): Promise<string | null> {
+    try {
+      const res = await fetch(
+        `${API_HOST}/sell/fulfillment/v1/order/${encodeURIComponent(externalOrderId)}/shipping_fulfillment`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      )
+      if (!res.ok) return null
+      const json: any = await res.json()
+      const fulfillments = (json.fulfillments || []) as any[]
+      return (
+        fulfillments
+          .map(f => f?.shipmentTrackingNumber)
+          .find(t => typeof t === 'string' && t.trim()) || null
+      )
+    } catch {
+      return null
+    }
+  },
+
   async fetchOrdersSince({ accessToken, sinceISO }): Promise<NormalizedOrder[]> {
     // sinceISO is NOT used as the filter — a creation-date filter scoped to
     // recent syncs would hide status changes on already-imported orders from

@@ -226,6 +226,23 @@ extra lookup call since the domain's already known at connect time).
   (compares stored vs. fetched, updates order-level fields only) but
   deliberately never touches line items on an update — those can be manually
   edited (the quantity editor), so a re-sync must not risk clobbering that.
+- **Tracking numbers import too** (2026-09-14) — `orders.tracking_number` is
+  filled from the marketplace where one exists. Etsy (receipt `shipments[]`
+  → `tracking_code`) and Shopify (order `fulfillments[]` →
+  `tracking_number`) both include it in the orders payload, so it's free.
+  **eBay does not**: tracking lives on
+  `/order/{orderId}/shipping_fulfillment`, one extra API call per order. So
+  the provider interface has an optional `fetchTrackingNumber` hook that
+  `sync.ts` calls **lazily** — only when an order is `shipped` AND has no
+  tracking stored — making it one extra call per order once, rather than one
+  per order per sync against eBay's shared daily quota. Don't "simplify" this
+  into fetching tracking for every order in `fetchOrdersSince`; that's the
+  version that burns the rate limit.
+  Tracking is only ever *filled in*, never overwritten — a number typed by
+  hand on the order page survives every re-sync (same rule as line items and
+  the title backfill). Note an Etsy receipt often has an empty `shipments`
+  array even when shipped, since a seller can mark shipped without tracking;
+  that's "no tracking", not an error.
 - **Imported orders are titled after what sold**, not the order number
   (2026-09-09) — the first product line item's description, plus
   `+N more` when there are several. The dashboard kanban card shows that

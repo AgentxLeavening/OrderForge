@@ -158,10 +158,19 @@ export const etsyProvider: MarketplaceProvider = {
         items.push({ description: 'Shipping & tax', quantity: 1, unitPrice: shippingAndTax, itemType: 'shipping', buyerCovered: true })
       }
 
+      // Etsy returns a `shipments` array on the receipt (carrier_name +
+      // tracking_code per shipment). It is frequently empty even for a
+      // shipped order — a seller can mark shipped without entering tracking —
+      // so treat a miss as "no tracking", not an error. Multi-package orders
+      // take the first tracked shipment; orders.tracking_number holds one.
+      const trackingNumber =
+        ((r.shipments || []) as any[]).map(s => s?.tracking_code).find(t => typeof t === 'string' && t.trim()) || null
+
       return {
         externalOrderId: String(r.receipt_id),
         buyerName: r.name || null,
         status: r.is_shipped ? 'shipped' : 'in_progress',
+        trackingNumber,
         itemsSubtotal,
         shippingAndTax,
         buyerCoversShipping: true,
