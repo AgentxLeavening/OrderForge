@@ -67,6 +67,16 @@ const COLUMNS = [
   { key: 'cancelled', label: 'Cancelled' },
 ]
 
+// The board proper is only the statuses with work left in them. Complete and
+// Cancelled are finished states that accumulate forever — as full columns they
+// ate a third of the board's width to show orders nobody needs to look at, so
+// they live as collapsible sections beneath it instead. They stay drop targets
+// (see the archive Droppables, which accept a drop even while collapsed),
+// because dragging into Complete is exactly how an order gets there.
+const ARCHIVE_STATUSES = ['complete', 'cancelled']
+const ACTIVE_COLUMNS = COLUMNS.filter(c => !ARCHIVE_STATUSES.includes(c.key))
+const ARCHIVE_COLUMNS = COLUMNS.filter(c => ARCHIVE_STATUSES.includes(c.key))
+
 const TYPE_EMOJI: Record<string, string> = {
   commission: '🎨',
   print_job: '🖨️',
@@ -92,6 +102,14 @@ export default function DashboardPage() {
   const [showModal, setShowModal] = useState(false)
   const [layout, setLayout] = useState<string[]>(DEFAULT_LAYOUT)
   const [savingLayout, setSavingLayout] = useState(false)
+  // Kanban cards start collapsed — with marketplace orders importing, a column
+  // like Shipped gets long enough that full cards make the board unusable to
+  // scroll or drag across. Expansion is per-card and lasts for the session
+  // only; it's a "let me peek at this one" gesture, not a saved preference.
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set())
+  // Which archive sections (Complete / Cancelled) are open. Both start shut —
+  // the point of moving them off the board is not having to look at them.
+  const [openArchive, setOpenArchive] = useState<Set<string>>(new Set())
 
   const fetchOrders = useCallback(async (userId: string, clientList: ClientOption[]) => {
     const { data } = await supabase
@@ -546,11 +564,145 @@ export default function DashboardPage() {
     </div>
   )
 
+  const toggleOrderExpanded = (orderId: string) => {
+    setExpandedOrders(prev => {
+      const next = new Set(prev)
+      if (next.has(orderId)) next.delete(orderId)
+      else next.add(orderId)
+      return next
+    })
+  }
+
+  // Bulk version behind each column's expand/collapse-all control. Scoped to
+  // the ids passed in rather than clearing the whole set, so expanding one
+  // column doesn't collapse what's open in another.
+  const setOrdersExpanded = (orderIds: string[], expanded: boolean) => {
+    setExpandedOrders(prev => {
+      const next = new Set(prev)
+      for (const id of orderIds) {
+        if (expanded) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+  }
+
+  const toggleArchiveSection = (statusKey: string) => {
+    setOpenArchive(prev => {
+      const next = new Set(prev)
+      if (next.has(statusKey)) next.delete(statusKey)
+      else next.add(statusKey)
+      return next
+    })
+  }
+
+  // One card, used by both the board columns and the archive sections below.
+  const renderOrderCard = (order: Order, index: number) => {
+    const clientName = Array.isArray(order.clients)
+      ? order.clients[0]?.name || ''
+      : (order.clients && (order.clients as { name?: string }).name) || ''
+    const clientIdLocal = order.client_id || ''
+    const isExpanded = expandedOrders.has(order.id)
+
+    return (
+      <Draggable key={order.id} draggableId={order.id} index={index}>
+        {(provided, snapshot) => (
+          <div
+            onClick={() => router.push(`/dashboard/orders/${order.id}`)}
+            ref={provided.innerRef}
+            {...provided.draggableProps}
+            {...provided.dragHandleProps}
+            className={`bg-gray-800 border rounded-xl transition cursor-grab active:cursor-grabbing ${
+              isExpanded ? 'p-4' : 'px-3 py-2.5'
+            } ${
+              snapshot.isDragging
+                ? 'border-indigo-500 shadow-lg shadow-indigo-500/20 rotate-1'
+                : 'border-gray-700 hover:border-indigo-500'
+            }`}
+          >
+            {/* Always-visible row: at-a-glance identity, plus the
+                expander. Collapsed, this is the whole card. */}
+            <div className="flex items-center gap-2">
+              <span className="text-base shrink-0">{TYPE_EMOJI[order.type] || '📋'}</span>
+
+              <div className="min-w-0 flex-1">
+                <p className="text-white text-sm font-medium leading-snug truncate">{order.title}</p>
+                <div className="flex items-center gap-2 text-[11px] leading-tight">
+                  <span className="text-gray-500 font-mono truncate">{order.order_number}</span>
+                  {order.due_date && (
+                    <span className={`shrink-0 ${isOverdue(order.due_date) ? 'text-red-400' : 'text-gray-500'}`}>
+                      Due {new Date(order.due_date).toLocaleDateString()}
+                      {isOverdue(order.due_date) && ' ⚠️'}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                aria-expanded={isExpanded}
+                aria-label={isExpanded ? `Hide details for ${order.order_number}` : `Show details for ${order.order_number}`}
+                // stopPropagation on click keeps the card's own
+                // onClick from navigating to the order; on mousedown
+                // it stops dnd treating a press here as a drag.
+                onClick={e => { e.stopPropagation(); toggleOrderExpanded(order.id) }}
+                onMouseDown={e => e.stopPropagation()}
+                className="shrink-0 -mr-1 p-1 rounded text-gray-500 hover:text-white hover:bg-gray-700 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                  className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                >
+                  <polyline points="5,8 10,13 15,8" />
+                </svg>
+              </button>
+            </div>
+
+            {isExpanded && (
+              <div className="mt-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {clientName ? (
+                    clientIdLocal ? (
+                      <Link
+                        href={`/dashboard/clients/${clientIdLocal}`}
+                        onClick={e => e.stopPropagation()}
+                        className="text-xs bg-gray-900 text-gray-300 px-2 py-1 rounded-full hover:bg-indigo-500 hover:text-white transition"
+                      >
+                        {clientName}
+                      </Link>
+                    ) : (
+                      <span className="text-xs bg-gray-900 text-gray-300 px-2 py-1 rounded-full">{clientName}</span>
+                    )
+                  ) : order.buyer_name ? (
+                    <span className="text-xs bg-gray-900 text-gray-300 px-2 py-1 rounded-full">🛒 {order.buyer_name}</span>
+                  ) : (
+                    <span className="text-xs text-gray-400">Unassigned</span>
+                  )}
+                  {order.sales_channel && (
+                    <span className="text-xs bg-indigo-500/15 text-indigo-300 px-2 py-0.5 rounded-full">{channelLabel(order.sales_channel)}</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Draggable>
+    )
+  }
+
   const renderKanban = () => (
     <DragDropContext onDragEnd={onDragEnd}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        {COLUMNS.map(col => {
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {ACTIVE_COLUMNS.map(col => {
           const colOrders = filteredOrders.filter(o => o.status === col.key)
+          const colOrderIds = colOrders.map(o => o.id)
+          const allExpanded = colOrderIds.length > 0 && colOrderIds.every(id => expandedOrders.has(id))
           return (
             // flex column + a flex-1 Droppable below, so the drop target fills
             // the whole column instead of hugging its cards. Grid items stretch
@@ -559,9 +711,44 @@ export default function DashboardPage() {
             // impossible to use once a long column (Shipped) sets the height.
             <div key={col.key} className="bg-gray-900 border border-gray-800 rounded-2xl p-4 flex flex-col">
               {/* Column Header */}
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-white font-semibold">{col.label}</h2>
-                <span className="bg-gray-800 text-gray-400 text-xs font-bold px-2 py-1 rounded-full">
+              <div className="flex items-center justify-between gap-1 mb-4">
+                <h2 className="text-white font-semibold truncate">{col.label}</h2>
+                {colOrderIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setOrdersExpanded(colOrderIds, !allExpanded)}
+                    aria-label={allExpanded ? `Collapse all ${col.label} orders` : `Expand all ${col.label} orders`}
+                    title={allExpanded ? 'Collapse all' : 'Expand all'}
+                    className="ml-auto shrink-0 p-1 rounded text-gray-500 hover:text-white hover:bg-gray-800 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {/* Chevrons apart = will expand; pointing together = will
+                        collapse. Stroked polylines rather than fill paths so the
+                        two states are unmistakably different shapes. */}
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.75"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      className="w-4 h-4"
+                    >
+                      {allExpanded ? (
+                        <>
+                          <polyline points="6,4 10,8 14,4" />
+                          <polyline points="6,16 10,12 14,16" />
+                        </>
+                      ) : (
+                        <>
+                          <polyline points="6,8 10,4 14,8" />
+                          <polyline points="6,12 10,16 14,12" />
+                        </>
+                      )}
+                    </svg>
+                  </button>
+                )}
+                <span className="shrink-0 bg-gray-800 text-gray-400 text-xs font-bold px-2 py-1 rounded-full">
                   {colOrders.length}
                 </span>
               </div>
@@ -580,67 +767,74 @@ export default function DashboardPage() {
                       <p className="text-gray-600 text-sm text-center py-6">No orders</p>
                     )}
 
-                    {colOrders.map((order, index) => {
-                      const clientName = Array.isArray(order.clients)
-                        ? order.clients[0]?.name || ''
-                        : (order.clients && (order.clients as { name?: string }).name) || ''
-                      const clientIdLocal = order.client_id || ''
+                    {colOrders.map(renderOrderCard)}
+                    {provided.placeholder}
+                  </div>
+                )}
+              </Droppable>
+            </div>
+          )
+        })}
+      </div>
 
-                      return (
-                        <Draggable key={order.id} draggableId={order.id} index={index}>
-                          {(provided, snapshot) => (
-                            <div
-                              onClick={() => router.push(`/dashboard/orders/${order.id}`)}
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                              className={`bg-gray-800 border rounded-xl p-4 transition cursor-grab active:cursor-grabbing ${
-                                snapshot.isDragging
-                                  ? 'border-indigo-500 shadow-lg shadow-indigo-500/20 rotate-1'
-                                  : 'border-gray-700 hover:border-indigo-500'
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-2 mb-2">
-                                <span className="text-white text-sm font-medium leading-snug">{order.title}</span>
-                                <span className="text-lg shrink-0">{TYPE_EMOJI[order.type] || '📋'}</span>
-                              </div>
+      {/* Finished states, stacked below the board: Complete, then Cancelled. */}
+      <div className="flex flex-col gap-4 mt-4">
+        {ARCHIVE_COLUMNS.map(col => {
+          const colOrders = filteredOrders.filter(o => o.status === col.key)
+          const isOpen = openArchive.has(col.key)
 
-                              <p className="text-gray-500 text-xs mb-2">{order.order_number}</p>
+          return (
+            <div key={col.key} className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+              <button
+                type="button"
+                onClick={() => toggleArchiveSection(col.key)}
+                aria-expanded={isOpen}
+                className="w-full flex items-center gap-3 text-left rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                  className={`w-4 h-4 shrink-0 text-gray-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                >
+                  <polyline points="5,8 10,13 15,8" />
+                </svg>
+                <h2 className="text-white font-semibold">{col.label}</h2>
+                <span className="bg-gray-800 text-gray-400 text-xs font-bold px-2 py-1 rounded-full">
+                  {colOrders.length}
+                </span>
+                <span className="ml-auto text-gray-600 text-xs">
+                  {isOpen ? 'Hide' : colOrders.length === 1 ? 'Show 1 order' : `Show ${colOrders.length} orders`}
+                </span>
+              </button>
 
-                              <div className="flex flex-wrap items-center gap-1.5 mb-2">
-                                {clientName ? (
-                                  clientIdLocal ? (
-                                    <Link
-                                      href={`/dashboard/clients/${clientIdLocal}`}
-                                      onClick={e => e.stopPropagation()}
-                                      className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full hover:bg-indigo-500 hover:text-white transition"
-                                    >
-                                      {clientName}
-                                    </Link>
-                                  ) : (
-                                    <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full">{clientName}</span>
-                                  )
-                                ) : order.buyer_name ? (
-                                  <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded-full">🛒 {order.buyer_name}</span>
-                                ) : (
-                                  <span className="text-xs text-gray-400">Unassigned</span>
-                                )}
-                                {order.sales_channel && (
-                                  <span className="text-xs bg-indigo-500/15 text-indigo-300 px-2 py-0.5 rounded-full">{channelLabel(order.sales_channel)}</span>
-                                )}
-                              </div>
-
-                              {order.due_date && (
-                                <p className={`text-xs ${isOverdue(order.due_date) ? 'text-red-400' : 'text-gray-400'}`}>
-                                  Due {new Date(order.due_date).toLocaleDateString()}
-                                  {isOverdue(order.due_date) && ' ⚠️'}
-                                </p>
-                              )}
-                            </div>
-                          )}
-                        </Draggable>
-                      )
-                    })}
+              {/* Stays a Droppable even while collapsed, so an order can still
+                  be dragged in — the strip under the header is the target, and
+                  it highlights on drag-over. Without this, closing the section
+                  would make Complete unreachable by drag, which is the only
+                  way an order gets there. */}
+              <Droppable droppableId={col.key}>
+                {(provided, snapshot) => (
+                  <div
+                    ref={provided.innerRef}
+                    {...provided.droppableProps}
+                    className={`rounded-xl transition ${isOpen ? 'mt-4 space-y-2' : 'mt-2'} ${
+                      snapshot.isDraggingOver
+                        ? 'bg-indigo-500/10 border border-dashed border-indigo-500/40 min-h-16'
+                        : isOpen ? '' : 'min-h-2'
+                    }`}
+                  >
+                    {isOpen && colOrders.length === 0 && !snapshot.isDraggingOver && (
+                      <p className="text-gray-600 text-sm py-4">No orders</p>
+                    )}
+                    {isOpen && colOrders.map(renderOrderCard)}
+                    {!isOpen && snapshot.isDraggingOver && (
+                      <p className="text-indigo-300 text-xs text-center py-5">Drop to mark {col.label}</p>
+                    )}
                     {provided.placeholder}
                   </div>
                 )}
