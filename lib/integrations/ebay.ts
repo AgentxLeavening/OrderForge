@@ -1,5 +1,5 @@
 import type { MarketplaceProvider, NormalizedOrder, ShopInfo, TokenSet } from './types'
-import { currentYearStartISO } from './syncWindow'
+import { syncCutoffISO } from './syncWindow'
 
 // eBay OAuth 2.0 (Authorization Code Grant, user-level token) + Fulfillment
 // API. Reference: https://developer.ebay.com/api-docs/static/oauth-auth-code-grant.html
@@ -108,16 +108,16 @@ export const ebayProvider: MarketplaceProvider = {
     return { externalShopId: 'ebay-account', externalShopName: null }
   },
 
-  async fetchOrdersSince({ accessToken }): Promise<NormalizedOrder[]> {
-    // Deliberately NOT filtering by sinceISO — same reasoning as Etsy's
-    // fetchOrdersSince: a creation-date filter would hide status changes on
-    // already-imported orders from sync.ts's update-detection. Re-check a
-    // fixed window every sync instead — see currentYearStartISO for why
-    // that window is "since Jan 1" rather than a rolling number of days.
+  async fetchOrdersSince({ accessToken, sinceISO }): Promise<NormalizedOrder[]> {
+    // sinceISO is NOT used as the filter — a creation-date filter scoped to
+    // recent syncs would hide status changes on already-imported orders from
+    // sync.ts's update-detection. It's used only to tell a first connect from
+    // a repeat sync, which is what decides how deep the fixed window below
+    // reaches (see syncCutoffISO).
     // Confirmed working against real production orders 2026-09-09. Note a
     // first sync mostly imports already-FULFILLED orders from earlier this
     // year, so they land as 'shipped' — that is expected, not a bug.
-    const since = currentYearStartISO()
+    const since = syncCutoffISO(sinceISO)
     const filters = [`creationdate:[${since}..]`]
     const params = new URLSearchParams({ filter: filters.join(','), limit: '50' })
 

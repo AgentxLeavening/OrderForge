@@ -1,5 +1,5 @@
 import type { MarketplaceProvider, NormalizedOrder, ShopInfo, TokenSet } from './types'
-import { currentYearStartISO } from './syncWindow'
+import { syncCutoffISO } from './syncWindow'
 
 // Shopify Admin API, OAuth 2.0 (authorization code grant). UNVERIFIED — no
 // Shopify credentials tested yet, built from Shopify's documented flow:
@@ -82,20 +82,21 @@ export const shopifyProvider: MarketplaceProvider = {
     return { externalShopId: shop, externalShopName: json.shop?.name ?? shop }
   },
 
-  async fetchOrdersSince({ accessToken, shopId }): Promise<NormalizedOrder[]> {
+  async fetchOrdersSince({ accessToken, shopId, sinceISO }): Promise<NormalizedOrder[]> {
     // shopId here is the myshopify.com domain (see exchangeCodeForToken,
     // which persists it as external_shop_id immediately, so this is always
     // populated by the time sync.ts calls in — no lazy fetchShopInfo needed).
     if (!shopId) throw new Error('Shopify order fetch requires a shop domain.')
-    // Deliberately NOT filtering by sinceISO — same reasoning as Etsy/eBay's
+    // sinceISO is NOT used as the filter — same reasoning as Etsy/eBay's
     // fetchOrdersSince: a narrower filter would hide status changes on
-    // orders already imported earlier this year. created_at_min below is
-    // the fixed since-Jan-1 window instead (see currentYearStartISO).
+    // orders already imported earlier this year. created_at_min below is the
+    // fixed window instead; sinceISO only distinguishes a first connect from
+    // a repeat sync, which sets how deep it reaches (see syncCutoffISO).
     const params = new URLSearchParams({
       status: 'any',
       limit: '100',
       order: 'created_at desc',
-      created_at_min: currentYearStartISO(),
+      created_at_min: syncCutoffISO(sinceISO),
     })
 
     let url: string | null = `https://${shopId}/admin/api/${API_VERSION}/orders.json?${params.toString()}`
