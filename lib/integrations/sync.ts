@@ -111,6 +111,18 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
 
     let imported = 0
     let updated = 0
+    // Returned in the sync result so "found nothing" and "the lookup broke"
+    // are distinguishable from the client, without server-log access.
+    const tracking = {
+      shipped: 0,        // orders the marketplace reports as shipped
+      alreadyStored: 0,  // already had a tracking number on the order
+      fromPayload: 0,    // came free in the orders response (Etsy/Shopify)
+      lookups: 0,        // extra per-order calls made (eBay)
+      fromLookup: 0,     // of those, ones that returned a number
+      lookupErrors: 0,
+      firstError: null as string | null,
+      written: 0,
+    }
     for (const o of normalizedOrders) {
       const orderNumber = `${provider.id.toUpperCase()}-${o.externalOrderId}`.slice(0, 32)
       const productItems = o.items.filter(it => it.itemType !== 'shipping')
@@ -149,12 +161,28 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
       // it behind an extra per-order call. Only worth spending when the order
       // looks shipped and we still have nothing — see fetchTrackingNumber's
       // comment in ebay.ts on why this isn't done for every order every sync.
+      if (o.status === 'shipped') tracking.shipped++
+      if (storedTracking) tracking.alreadyStored++
+      if (o.trackingNumber) tracking.fromPayload++
+
       if (!trackingNumber && o.status === 'shipped' && provider.fetchTrackingNumber) {
-        trackingNumber = await provider.fetchTrackingNumber({
-          accessToken,
-          shopId,
-          externalOrderId: o.externalOrderId,
-        })
+        tracking.lookups++
+        try {
+          trackingNumber = await provider.fetchTrackingNumber({
+            accessToken,
+            shopId,
+            externalOrderId: o.externalOrderId,
+          })
+          if (trackingNumber) tracking.fromLookup++
+        } catch (e) {
+          // One failed lookup must not fail the import — record why and move
+          // on. The first message is returned in the sync result so a failure
+          // is visible without digging through server logs.
+          tracking.lookupErrors++
+          const message = e instanceof Error ? e.message : String(e)
+          if (!tracking.firstError) tracking.firstError = message
+          console.warn(`${provider.id} tracking lookup failed`, message)
+        }
       }
 
       if (!existing) {
@@ -182,6 +210,7 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
 
         if (insErr || !inserted) { console.warn(`Failed importing ${provider.id} order ${o.externalOrderId}`, insErr); continue }
         imported++
+        if (trackingNumber) tracking.written++
 
         if (o.items.length) {
           await admin.from('order_items').insert(
@@ -265,6 +294,7 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
 
       if (updErr) { console.warn(`Failed updating ${provider.id} order ${o.externalOrderId}`, updErr); continue }
       updated++
+      if (trackingChanged) tracking.written++
     }
 
     await admin
@@ -272,7 +302,7 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
       .update({ last_synced_at: new Date().toISOString(), last_sync_error: null })
       .eq('id', connection.id)
 
-    return { imported, updated, checked: normalizedOrders.length }
+    return { imported, updated, checked: normalizedOrders.length, tracking }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     await admin.from('marketplace_connections').update({ last_sync_error: message }).eq('id', connection.id)
