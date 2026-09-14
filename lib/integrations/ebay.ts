@@ -118,26 +118,26 @@ export const ebayProvider: MarketplaceProvider = {
   // and has no tracking stored yet — once per order, not once per sync.
   //
   // A shipped order legitimately may have no tracking (seller shipped without
-  // it), and this is a nice-to-have enrichment rather than the point of the
-  // sync, so failures return null instead of throwing: one unavailable
-  // fulfillment must not fail the whole import.
+  // it), so "no tracking" returns null. A *failed lookup* throws instead —
+  // swallowing it made a permissions problem, a bad URL and a genuinely
+  // untracked order indistinguishable from the outside, which cost a debugging
+  // cycle. sync.ts catches this so one bad fulfillment still can't fail the
+  // whole import; it just records why.
   async fetchTrackingNumber({ accessToken, externalOrderId }): Promise<string | null> {
-    try {
-      const res = await fetch(
-        `${API_HOST}/sell/fulfillment/v1/order/${encodeURIComponent(externalOrderId)}/shipping_fulfillment`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      )
-      if (!res.ok) return null
-      const json: any = await res.json()
-      const fulfillments = (json.fulfillments || []) as any[]
-      return (
-        fulfillments
-          .map(f => f?.shipmentTrackingNumber)
-          .find(t => typeof t === 'string' && t.trim()) || null
-      )
-    } catch {
-      return null
+    const res = await fetch(
+      `${API_HOST}/sell/fulfillment/v1/order/${encodeURIComponent(externalOrderId)}/shipping_fulfillment`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    )
+    if (!res.ok) {
+      throw new Error(`eBay fulfillment lookup failed for ${externalOrderId}: ${res.status} ${(await res.text()).slice(0, 300)}`)
     }
+    const json: any = await res.json()
+    const fulfillments = (json.fulfillments || []) as any[]
+    return (
+      fulfillments
+        .map(f => f?.shipmentTrackingNumber)
+        .find(t => typeof t === 'string' && t.trim()) || null
+    )
   },
 
   async fetchOrdersSince({ accessToken, sinceISO }): Promise<NormalizedOrder[]> {
