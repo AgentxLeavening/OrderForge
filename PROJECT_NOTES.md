@@ -542,24 +542,69 @@ Differences from eBay's equivalent that are easy to get wrong:
   `FULFILLED`, so the guessed `PARTIALLY_FULFILLED` never matched; the check
   is now `=== 'FULFILLED'`. No behaviour change (a partly-shipped order still
   falls through to `'in_progress'`, which is correct).
-- **Auto-completing orders on delivery: carrier tracking lookup is the way
-  to do it.** Decided 2026-09-09 to leave imported orders terminating at
-  Shipped for now. No marketplace tells us an order was *delivered* —
-  eBay's `orderFulfillmentStatus` stops at `FULFILLED`, and its
-  `ShippingFulfillment` resource carries only `shipmentTrackingNumber`,
-  `shippedDate`, and `shippingCarrierCode`, with no delivery confirmation
-  anywhere. The rejected alternative was a time-based heuristic (mark
-  Complete N days after shipping), which guesses at status and cuts against
-  the rule this codebase already follows everywhere else — never advance an
-  order's status on assumption (cf. the tracking-number and invoice-quote
-  rules). A wrong "Complete" is worse than an accurate "Shipped", not least
-  because Reports reads off these statuses.
-  The better future option: feed `shipmentTrackingNumber` +
-  `shippingCarrierCode` to a carrier API or an aggregator (EasyPost,
-  Shippo, etc.) and advance to Complete on a real delivered event. That
-  gives actual delivery data rather than a guess, and because
-  `orders.tracking_number` already exists and Etsy/Shopify also expose
-  tracking, it would work across all three providers rather than being an
-  eBay-only feature.
+- **Auto-completing orders on delivery.** Imported orders still terminate at
+  Shipped. **Correction (2026-09-14):** the original note here claimed "no
+  marketplace tells us an order was *delivered*". That is true of eBay and
+  **false of Etsy** — Etsy has webhooks, and one of its four topics is
+  `order.delivered`. The eBay reasoning was sound and got over-generalised to
+  every provider without checking Etsy's webhook surface, which we didn't
+  know existed.
+  - **eBay**: still no delivery signal. `orderFulfillmentStatus` stops at
+    `FULFILLED`, and `ShippingFulfillment` carries only
+    `shipmentTrackingNumber`, `shippedDate` and `shippingCarrierCode`.
+    A carrier API or aggregator (EasyPost, Shippo) keyed off the tracking
+    number we now store remains the only real route here.
+  - **Etsy**: can advance to Complete natively off `order.delivered`, no
+    carrier integration and no guessing.
+  - Still rejected: a time-based heuristic ("Complete N days after
+    shipping"). It guesses at status and cuts against the rule this codebase
+    follows everywhere else — never advance an order's status on assumption
+    (cf. the tracking-number and invoice-quote rules). A wrong "Complete" is
+    worse than an accurate "Shipped", not least because Reports reads off
+    these statuses.
+
+## Etsy webhooks — scoped, not built (2026-09-14)
+Etsy has a webhook system we weren't using; `lib/integrations/etsy.ts` polls
+receipts instead. Four topics exist:
+`order.paid`, `order.canceled`, `order.shipped`, `order.delivered`.
+Subscriptions are created in the Webhook Portal from the app dashboard
+(callback URL + topic), not via an API call.
+
+Why it's worth doing, in priority order:
+1. **Orders arrive on their own.** `order.paid` removes the "Sync now"
+   button from the critical path for Etsy. That manual step is the single
+   biggest credibility gap in the product's own positioning (see the
+   commission-pipeline framing) — a seller running a queue expects work to
+   simply be there.
+2. **`order.delivered` closes the auto-complete question for Etsy** without
+   any carrier integration.
+3. **`order.canceled` / `order.shipped`** keep status fresh between syncs.
+
+Design notes for whoever picks this up:
+- **Verification is a third distinct scheme.** Etsy sends `webhook-id`,
+  `webhook-timestamp` and `webhook-signature` (HMAC-SHA256 with a signing
+  secret from the dashboard) — the Standard Webhooks pattern. That is neither
+  eBay's ECDSA-over-raw-body nor Shopify's single-header HMAC. Same raw-body
+  rule applies to all three: verify before parsing. Follow the shape of
+  `lib/integrations/shopifyWebhooks.ts` and its tests; sign with a known
+  secret in tests since the real path can't run in CI.
+- **Webhooks supplement the poll, they don't replace it.** A missed or
+  failed delivery must not mean a lost order, and the existing sync is
+  already idempotent (`external_source`/`external_order_id`), so the poll
+  stays as the backstop. Treat a webhook as "sync this one order now".
+- **Reuse the write path, don't fork it.** The status-rank guard, the
+  never-clobber rules for line items/title/tracking, and inventory deduction
+  all live in `syncProviderOrders`. A webhook handler that writes orders
+  directly would quietly lose every one of those. Prefer fetching the single
+  receipt and running it through the same normalise-and-upsert logic.
+- **`order.delivered` → `complete` needs a decision first.** Today no
+  provider's normalized status ever reaches `complete` — it's deliberately
+  the seller's call (see the comment in `types.ts` and the status-rank guard
+  in `sync.ts`). Letting Etsy emit `complete` changes that contract, so
+  decide whether delivered-means-complete is right for a seller who uses
+  Complete to mean "done and paid, return window closed".
+- Webhooks need a publicly reachable HTTPS endpoint, so this is
+  production-only; local testing needs a tunnel.
+
 - TikTok Shop/Facebook: fully unverified, no credentials tested at all yet.
 - Marketplace sync is manual ("Sync now" button) — no scheduled/background sync yet.
