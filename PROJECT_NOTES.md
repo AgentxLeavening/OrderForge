@@ -447,18 +447,41 @@ Steps, in order:
   policy URL**, which is why `app/privacy/page.tsx` exists.
 
 ## Known debt / follow-ups
-- **eBay account deletion notifications are acknowledged but not acted on —
-  blocker for onboarding any user other than the developer.**
-  `app/api/integrations/ebay/deletion/route.ts` returns 200 and logs, without
-  scrubbing anything. That is currently defensible only because the sole user
-  is the app's owner and the only third-party PII stored is a buyer display
-  name (`lib/integrations/ebay.ts` maps `o.buyer?.username` → `buyerName` on
-  imported orders). Once real sellers connect, those usernames belong to
-  strangers across many accounts, and eBay's Marketplace Account Deletion
-  policy requires actually deleting them on notification. Before a second
-  user is onboarded: implement real deletion keyed off
-  `notification.data.username` / `userId`, and re-check whether
-  `app/privacy/page.tsx` still describes what is stored.
+- ~~eBay account deletion notifications acknowledged but not acted on~~ —
+  **implemented 2026-09-14**, no longer a blocker for onboarding other users.
+  `app/api/integrations/ebay/deletion/route.ts` now verifies the notification
+  and scrubs. Two things worth understanding before touching it:
+  - **Signature verification is load-bearing, not decoration.** The endpoint
+    is public (its URL is registered with eBay) and now *deletes data*, so
+    without verification anyone could strip buyer names out of a seller's
+    orders. `lib/integrations/ebayNotifications.ts` implements eBay's scheme,
+    taken from their own SDK rather than reconstructed: `x-ebay-signature` is
+    base64 JSON `{kid, signature}`; the key comes from
+    `/commerce/notification/v1/public_key/{kid}` using a client-credentials
+    app token (no user consent); verification is **ECDSA over SHA1** against
+    the **raw request body** — parse only after verifying, since
+    re-serialising a parsed object changes the bytes and breaks it. eBay
+    returns the PEM with no line breaks and Node rejects that, hence
+    `normalizePublicKeyPem`. Covered by `test/ebayNotifications.test.ts`,
+    which signs with a locally generated P-256 key (the real path can't be
+    exercised in CI).
+  - **It anonymises, it does not delete orders.** The only third-party PII we
+    hold is the buyer's display name in `orders.buyer_name`; the order itself
+    is the seller's business record, needed for tax, and identifies nobody
+    once the name is gone. Scrubbing runs across all users' orders, since a
+    deletion request is global.
+  - Non-2xx responses are deliberate — eBay retries them, which is what we
+    want whenever the request couldn't be confirmed or the erasure couldn't
+    complete. 412 for a bad signature, 500 when verification can't be
+    attempted at all.
+  - **Emergency lever**: `EBAY_DELETION_ACK_ONLY=true` makes the route verify
+    and log but always 200 without scrubbing. It exists because a wrong
+    verification implementation would draw rejections and eBay can
+    deactivate the production keyset over it. It deliberately cannot make
+    the route scrub unverified payloads — it only disables the deletion,
+    never the verification.
+  - If buyer PII beyond a display name is ever imported, this route and
+    `app/privacy/page.tsx` both have to change.
 - Pre-existing ESLint errors (`no-explicit-any`, some react-hooks rules) — **non-blocking**,
   the Turbopack build does not fail on them.
 - One historical order `ORD-880512` has a `suggested_price` ($15) but no line item —
