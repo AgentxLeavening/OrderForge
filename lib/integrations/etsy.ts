@@ -1,5 +1,5 @@
 import type { MarketplaceProvider, NormalizedOrder, ShopInfo, TokenSet } from './types'
-import { currentYearStartISO } from './syncWindow'
+import { syncCutoffISO } from './syncWindow'
 
 // Etsy Open API v3, OAuth 2.0 + PKCE. Reference: https://developer.etsy.com/documentation/essentials/authentication
 // Confirmed live 2026-09-03 against a real (freshly-approved) app:
@@ -108,15 +108,16 @@ export const etsyProvider: MarketplaceProvider = {
     return { externalShopId: String(json.shop_id), externalShopName: json.shop_name ?? null }
   },
 
-  async fetchOrdersSince({ accessToken, shopId }): Promise<NormalizedOrder[]> {
-    // Deliberately NOT filtering by sinceISO: Etsy's receipts endpoint
-    // filters on creation date, not last-modified, so an already-imported
-    // order that just shipped wouldn't show up in a window scoped to
-    // *recent syncs* for sync.ts to notice the status change. min_created
-    // below is a much wider, fixed window instead (since Jan 1 — see
-    // currentYearStartISO), re-checked in full every sync; sync.ts skips
+  async fetchOrdersSince({ accessToken, shopId, sinceISO }): Promise<NormalizedOrder[]> {
+    // sinceISO is NOT used as the filter: Etsy's receipts endpoint filters on
+    // creation date, not last-modified, so an already-imported order that just
+    // shipped wouldn't show up in a window scoped to *recent syncs* for
+    // sync.ts to notice the status change. min_created below is a much wider,
+    // fixed window instead, re-checked in full every sync; sync.ts skips
     // receipts that are unchanged, so this only costs API calls, not writes.
-    const minCreated = Math.floor(new Date(currentYearStartISO()).getTime() / 1000)
+    // sinceISO's only job here is telling a first connect from a repeat sync,
+    // which sets how deep that window reaches — see syncCutoffISO.
+    const minCreated = Math.floor(new Date(syncCutoffISO(sinceISO)).getTime() / 1000)
     const limit = 100
     const receipts: any[] = []
     // Capped well above what a small shop could generate in a year — a

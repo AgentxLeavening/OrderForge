@@ -15,3 +15,34 @@
 export function currentYearStartISO(): string {
   return new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1)).toISOString()
 }
+
+// A first-connect backfill reaches at least this far back, even when the
+// current year hasn't been running that long yet.
+const FIRST_SYNC_MIN_DAYS = 90
+
+// The window a provider's fetchOrdersSince should actually use.
+//
+// Every sync after the first uses the year start, exactly as above — that's
+// what keeps tax reporting whole. But the year start is a *seasonal* depth:
+// on 2 January it reaches back two days, so a seller connecting a shop then
+// would import almost nothing and reasonably conclude the sync is broken.
+// A first connect therefore reaches back whichever is further, the year
+// start or FIRST_SYNC_MIN_DAYS ago. From roughly April onwards the year
+// start is already the deeper of the two and this changes nothing.
+//
+// `lastSyncedAt` is marketplace_connections.last_synced_at, which is null
+// until a connection's first successful sync — so "has this account synced
+// before" needs no extra state.
+//
+// Consequence worth knowing: a January first sync pulls in orders from last
+// year, and later syncs won't re-check those for status changes once the
+// window snaps back to the year start. That's the same trade-off documented
+// above, reached from the other direction, and those orders fall outside
+// this year's tax scope anyway.
+export function syncCutoffISO(lastSyncedAt: string | null): string {
+  const yearStart = currentYearStartISO()
+  if (lastSyncedAt) return yearStart
+
+  const minBackfill = new Date(Date.now() - FIRST_SYNC_MIN_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  return minBackfill < yearStart ? minBackfill : yearStart
+}
