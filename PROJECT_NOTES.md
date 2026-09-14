@@ -226,7 +226,9 @@ extra lookup call since the domain's already known at connect time).
   (compares stored vs. fetched, updates order-level fields only) but
   deliberately never touches line items on an update — those can be manually
   edited (the quantity editor), so a re-sync must not risk clobbering that.
-- **Tracking numbers import too** (2026-09-14) — `orders.tracking_number` is
+- **Tracking numbers import too** (2026-09-14, **verified live on production**
+  — a real eBay sync filled 81 of 83 orders; the 2 without simply have no
+  tracking on eBay) — `orders.tracking_number` is
   filled from the marketplace where one exists. Etsy (receipt `shipments[]`
   → `tracking_code`) and Shopify (order `fulfillments[]` →
   `tracking_number`) both include it in the orders payload, so it's free.
@@ -243,6 +245,12 @@ extra lookup call since the domain's already known at connect time).
   the title backfill). Note an Etsy receipt often has an empty `shipments`
   array even when shipped, since a seller can mark shipped without tracking;
   that's "no tracking", not an error.
+  The sync response carries a `tracking` breakdown (shipped / alreadyStored /
+  fromPayload / lookups / fromLookup / lookupErrors / firstError / written),
+  readable in the browser's network response for the sync POST. It exists
+  because a silent `null` made "lookup broke" and "nothing to find"
+  indistinguishable; it immediately showed the opposite of the suspected bug
+  (`alreadyStored: 81` — the import had already worked). Keep it.
 - **Imported orders are titled after what sold**, not the order number
   (2026-09-09) — the first product line item's description, plus
   `+N more` when there are several. The dashboard kanban card shows that
