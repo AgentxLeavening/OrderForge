@@ -119,6 +119,9 @@ export default function OrderDetailPage() {
   const [trackingNumber, setTrackingNumber] = useState('')
   // Bumped after creating an invoice, so the Payments card re-reads the amount due.
   const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0)
+  // Null until loaded; false means neither a Venmo nor a PayPal handle is set,
+  // so quotes would go out with no way for the customer to pay from them.
+  const [hasPayHandle, setHasPayHandle] = useState<boolean | null>(null)
 
   // New line item
   const [newDesc, setNewDesc] = useState('')
@@ -151,6 +154,13 @@ export default function OrderDetailPage() {
         .eq('user_id', user.id)
         .order('name', { ascending: true })
 
+      const { data: payProfile } = await supabase
+        .from('profiles')
+        .select('venmo_username, paypal_me_name')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      setHasPayHandle(!!(payProfile?.venmo_username || payProfile?.paypal_me_name))
       setClientOptions(clients || [])
       setProductOptions(products || [])
       setOrder(orderData)
@@ -816,6 +826,13 @@ const handleGenerateInvoice = async () => {
           )}
           {lineItems.length === 0 && (
             <p className="text-gray-600 text-xs">Add a line item before sending a quote.</p>
+          )}
+          {hasPayHandle === false && (
+            <p className="text-gray-500 text-xs">
+              Add a Venmo or PayPal handle in{' '}
+              <Link href="/dashboard/settings" className="text-indigo-400 hover:text-indigo-300">Settings</Link>
+              {' '}so customers can pay straight from the quote.
+            </p>
           )}
           {!['inquiry', 'quoted'].includes(status) && (
             <p className="text-gray-600 text-xs">Invoice only available while the order is Inquiry or Quoted.</p>
