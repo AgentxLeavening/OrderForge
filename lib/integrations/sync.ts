@@ -1,5 +1,5 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
-import type { MarketplaceProvider } from './types'
+import type { MarketplaceProvider, NormalizedOrder } from './types'
 
 // Deducts a product's BOM for one auto-matched marketplace order — mirrors
 // NewOrderModal's template-order deduction (same inventory-item resolution
@@ -50,14 +50,19 @@ async function deductInventoryForMatchedProduct(
   }
 }
 
-// Shared pull-and-import logic for any provider conforming to
-// MarketplaceProvider. Always operates via the service-role client, always
-// scoped to the given userId — callers must have already verified the caller
-// IS that user (see the Route Handlers, which derive userId from the
-// session cookie before calling this).
-export async function syncProviderOrders(provider: MarketplaceProvider, userId: string) {
-  const admin = createSupabaseAdminClient()
+// Never let a re-sync move status backward. 'complete' is only ever emitted
+// from a real delivery signal (Etsy's order.delivered webhook) — marketplaces
+// polled on a schedule tell us up through 'shipped', and without this guard an
+// order already at Complete (by the seller or by that webhook) would bounce
+// straight back to Shipped on the very next poll. 'cancelled' ranks above
+// 'complete' so nothing can pull an order back out of it.
+const STATUS_RANK: Record<string, number> = { inquiry: 0, quoted: 1, in_progress: 2, shipped: 3, complete: 4, cancelled: 5 }
 
+type Admin = ReturnType<typeof createSupabaseAdminClient>
+
+// Loads the connection and makes it usable: refreshes a token that's expired
+// or about to (60s buffer) and resolves the shop id on first use.
+async function openConnection(admin: Admin, provider: MarketplaceProvider, userId: string) {
   const { data: connection, error: connErr } = await admin
     .from('marketplace_connections')
     .select('*')
@@ -70,31 +75,50 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
   let accessToken = connection.access_token as string
   let shopId = connection.external_shop_id as string | null
 
-  try {
-    // Refresh if expired or about to expire (60s buffer).
-    const expiresAt = connection.expires_at ? new Date(connection.expires_at).getTime() : 0
-    if (connection.refresh_token && expiresAt && expiresAt - Date.now() < 60_000) {
-      const refreshed = await provider.refreshAccessToken(connection.refresh_token)
-      accessToken = refreshed.accessToken
-      await admin
-        .from('marketplace_connections')
-        .update({
-          access_token: refreshed.accessToken,
-          refresh_token: refreshed.refreshToken ?? connection.refresh_token,
-          expires_at: refreshed.expiresAt,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', connection.id)
-    }
+  const expiresAt = connection.expires_at ? new Date(connection.expires_at).getTime() : 0
+  if (connection.refresh_token && expiresAt && expiresAt - Date.now() < 60_000) {
+    const refreshed = await provider.refreshAccessToken(connection.refresh_token)
+    accessToken = refreshed.accessToken
+    await admin
+      .from('marketplace_connections')
+      .update({
+        access_token: refreshed.accessToken,
+        refresh_token: refreshed.refreshToken ?? connection.refresh_token,
+        expires_at: refreshed.expiresAt,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', connection.id)
+  }
 
-    if (!shopId) {
-      const shop = await provider.fetchShopInfo(accessToken)
-      shopId = shop.externalShopId
-      await admin
-        .from('marketplace_connections')
-        .update({ external_shop_id: shop.externalShopId, external_shop_name: shop.externalShopName })
-        .eq('id', connection.id)
-    }
+  if (!shopId) {
+    const shop = await provider.fetchShopInfo(accessToken)
+    shopId = shop.externalShopId
+    await admin
+      .from('marketplace_connections')
+      .update({ external_shop_id: shop.externalShopId, external_shop_name: shop.externalShopName })
+      .eq('id', connection.id)
+  }
+
+  return { connection, accessToken, shopId }
+}
+
+// Shared pull-and-import logic for any provider conforming to
+// MarketplaceProvider. Always operates via the service-role client, always
+// scoped to the given userId — callers must have already verified the caller
+// IS that user (see the Route Handlers, which derive userId from the
+// session cookie before calling this).
+export async function syncProviderOrders(provider: MarketplaceProvider, userId: string) {
+  const admin = createSupabaseAdminClient()
+  const { data: row } = await admin
+    .from('marketplace_connections')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('provider', provider.id)
+    .maybeSingle()
+  if (!row) throw new Error(`No ${provider.id} connection found for this user.`)
+
+  try {
+    const { connection, accessToken, shopId } = await openConnection(admin, provider, userId)
 
     const normalizedOrders = await provider.fetchOrdersSince({
       accessToken,
@@ -102,6 +126,63 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
       sinceISO: connection.last_synced_at,
     })
 
+    const result = await importOrders(admin, provider, userId, { accessToken, shopId }, normalizedOrders)
+
+    await admin
+      .from('marketplace_connections')
+      .update({ last_synced_at: new Date().toISOString(), last_sync_error: null })
+      .eq('id', connection.id)
+
+    return result
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    await admin.from('marketplace_connections').update({ last_sync_error: message }).eq('id', row.id)
+    throw e
+  }
+}
+
+/**
+ * Imports or updates one order the marketplace just told us about (webhook
+ * path), through exactly the same logic as a full sync — status guard,
+ * never-clobber rules, inventory deduction and restock all included.
+ *
+ * `statusFloor` lifts the order to at least that status when the notification
+ * itself carries information the order payload doesn't: Etsy's receipt has no
+ * delivery field, so order.delivered passes 'complete' here. The forward-only
+ * guard still applies, so a floor can never move an order backward.
+ *
+ * Deliberately leaves last_synced_at / last_sync_error alone: those describe
+ * the scheduled poll, and one webhook succeeding says nothing about whether the
+ * poll is healthy.
+ */
+export async function syncSingleOrder(
+  provider: MarketplaceProvider,
+  userId: string,
+  externalOrderId: string,
+  opts: { statusFloor?: NormalizedOrder['status'] } = {}
+) {
+  if (!provider.fetchOrder) throw new Error(`${provider.id} does not support single-order sync.`)
+  const admin = createSupabaseAdminClient()
+  const { accessToken, shopId } = await openConnection(admin, provider, userId)
+
+  const order = await provider.fetchOrder({ accessToken, shopId, externalOrderId })
+  if (!order) return { imported: 0, updated: 0, checked: 0, found: false }
+
+  const floor = opts.statusFloor
+  if (floor && STATUS_RANK[floor] > STATUS_RANK[order.status]) order.status = floor
+
+  const result = await importOrders(admin, provider, userId, { accessToken, shopId }, [order])
+  if (result.failed) throw new Error(`Failed writing ${provider.id} order ${externalOrderId} (see logs).`)
+  return { imported: result.imported, updated: result.updated, checked: result.checked, found: true }
+}
+
+async function importOrders(
+  admin: Admin,
+  provider: MarketplaceProvider,
+  userId: string,
+  { accessToken, shopId }: { accessToken: string; shopId: string },
+  normalizedOrders: NormalizedOrder[]
+) {
     // Auto-match new imports to a product template by exact title (case/
     // whitespace-insensitive) — a starting point the seller can always
     // override on the order detail page, never touched again after insert
@@ -111,6 +192,9 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
 
     let imported = 0
     let updated = 0
+    // Orders that couldn't be written. A poll just tries them again next run;
+    // syncSingleOrder turns any into an error so the webhook is retried.
+    let failed = 0
     // Returned in the sync result so "found nothing" and "the lookup broke"
     // are distinguishable from the client, without server-log access.
     const tracking = {
@@ -208,7 +292,7 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
           .select('id')
           .single()
 
-        if (insErr || !inserted) { console.warn(`Failed importing ${provider.id} order ${o.externalOrderId}`, insErr); continue }
+        if (insErr || !inserted) { console.warn(`Failed importing ${provider.id} order ${o.externalOrderId}`, insErr); failed++; continue }
         imported++
         if (trackingNumber) tracking.written++
 
@@ -228,7 +312,8 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
         // Only deducts on an auto-matched product at import time — a product
         // linked manually later never retroactively deducts, since by then
         // the seller may have already accounted for the sale themselves.
-        if (matchedProductId) {
+        // An order that arrives already cancelled never consumed anything.
+        if (matchedProductId && o.status !== 'cancelled') {
           const primaryQty = o.items.find(it => it.itemType !== 'shipping')?.quantity || 1
           try {
             await deductInventoryForMatchedProduct(admin, userId, inserted.id, matchedProductId, primaryQty)
@@ -248,19 +333,8 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
       const newTotal = o.itemsSubtotal + o.shippingAndTax
       const totalChanged = Math.abs(existingTotal - newTotal) > 0.005
 
-      // Never let a re-sync move status backward. No provider's normalized
-      // status ever reaches 'complete' (see the type comment in types.ts —
-      // marketplaces only ever tell us up through 'shipped'; 'complete' is
-      // deliberately something the seller decides in OrderForge, e.g. after
-      // a return window). Without this guard, an order the seller already
-      // dragged to Complete gets bounced straight back to Shipped on the
-      // very next sync, since the marketplace still just reports 'shipped'.
-      // 'cancelled' isn't part of this forward progression either — no
-      // provider emits it today, it's manual/local-only — so it ranks above
-      // 'complete' here purely so a re-sync can never pull an order back
-      // out of it.
-      const statusRank: Record<string, number> = { inquiry: 0, quoted: 1, in_progress: 2, shipped: 3, complete: 4, cancelled: 5 }
-      const nextStatus = statusRank[o.status] >= (statusRank[existing.status] ?? 0) ? o.status : existing.status
+      // Forward-only — see STATUS_RANK.
+      const nextStatus = STATUS_RANK[o.status] >= (STATUS_RANK[existing.status] ?? 0) ? o.status : existing.status
       const statusChanged = existing.status !== nextStatus
 
       // One-time backfill for orders imported before titles used the item
@@ -278,6 +352,25 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
 
       if (!totalChanged && !statusChanged && !titleChanged && !trackingChanged) continue
 
+      // The marketplace cancelled it: return whatever the import deducted,
+      // same as cancelling by hand. Done BEFORE the status write on purpose —
+      // if the restock fails, the order stays un-cancelled, so the webhook
+      // retry or the next poll tries again. The other order would leave it
+      // marked Cancelled with the stock never returned, and nothing would
+      // ever retry. The RPC is idempotent, so retries can't double-credit.
+      if (nextStatus === 'cancelled' && existing.status !== 'cancelled') {
+        const { error: restockErr } = await admin.rpc('restock_inventory_for_order_admin', {
+          p_user_id: userId,
+          p_order_id: existing.id,
+          p_reason: 'order_cancelled_restock',
+        })
+        if (restockErr) {
+          console.warn(`Restock failed for ${provider.id} order ${o.externalOrderId}`, restockErr)
+          failed++
+          continue
+        }
+      }
+
       const { error: updErr } = await admin
         .from('orders')
         .update({
@@ -292,20 +385,10 @@ export async function syncProviderOrders(provider: MarketplaceProvider, userId: 
         })
         .eq('id', existing.id)
 
-      if (updErr) { console.warn(`Failed updating ${provider.id} order ${o.externalOrderId}`, updErr); continue }
+      if (updErr) { console.warn(`Failed updating ${provider.id} order ${o.externalOrderId}`, updErr); failed++; continue }
       updated++
       if (trackingChanged) tracking.written++
     }
 
-    await admin
-      .from('marketplace_connections')
-      .update({ last_synced_at: new Date().toISOString(), last_sync_error: null })
-      .eq('id', connection.id)
-
-    return { imported, updated, checked: normalizedOrders.length, tracking }
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e)
-    await admin.from('marketplace_connections').update({ last_sync_error: message }).eq('id', connection.id)
-    throw e
-  }
+    return { imported, updated, failed, checked: normalizedOrders.length, tracking }
 }

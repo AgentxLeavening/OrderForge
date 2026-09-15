@@ -19,8 +19,10 @@ export type NormalizedOrder = {
   buyerName: string | null
   // 'shipped' — out for delivery but not otherwise closed out (reviewed, no
   // returns, etc.) — is a better fit than jumping straight to 'complete' for
-  // marketplaces that only tell us shipment status.
-  status: 'in_progress' | 'shipped' | 'complete'
+  // marketplaces that only tell us shipment status. 'complete' is reached only
+  // from a real delivery signal (Etsy's order.delivered webhook), never guessed.
+  // 'cancelled' makes sync.ts restock whatever the import deducted.
+  status: 'in_progress' | 'shipped' | 'complete' | 'cancelled'
   // Split, not a combined total — orders.suggested_price and
   // orders.estimated_shipping are separate fields feeding a profit formula
   // that only cancels shipping out of profit when it's in estimated_shipping
@@ -77,4 +79,8 @@ export interface MarketplaceProvider {
   // call once, and nothing on subsequent syncs. Returns null when the
   // marketplace has no tracking for it (common: shipped without tracking).
   fetchTrackingNumber?(params: { accessToken: string; shopId: string; externalOrderId: string }): Promise<string | null>
+  // Optional, for providers that push per-order webhooks (Etsy): fetch just the
+  // one order the notification names, so it runs through the same import logic
+  // as a full sync. Returns null when the marketplace no longer has it.
+  fetchOrder?(params: { accessToken: string; shopId: string; externalOrderId: string }): Promise<NormalizedOrder | null>
 }
