@@ -321,10 +321,26 @@ the first two, planned the other two.
   reports above. Was previously duplicated in two places, which is exactly
   what let the 2026-09-03 shipping-as-pure-profit bug happen — do not
   reintroduce a third inline copy of this formula anywhere.
-- **Not yet built**: a unified reorder/purchase list (low-stock items →
-  real shopping list with estimated cost, timed to actual cross-channel
-  consumption velocity), and estimated-vs-actual time tracking per order
-  (a timer compared against the `est_time` used in pricing).
+- **Reorder List** (`/dashboard/reports/reorder`, 2026-09-15; logic in
+  `lib/reorder.ts`, tests in `test/reorder.test.ts`; also linked from the
+  Inventory header and the dashboard low-stock banner). Usage = order
+  deductions (`order_template_deduction`) over a 30/60/90-day window, split by
+  the order's `sales_channel`, giving a per-day rate and days left. An item is
+  listed when it's at its threshold **or** will run out within the chosen
+  "buy enough to last" period (14/30/60 days), so an item with no threshold
+  still shows up once orders are burning through it. Suggested qty =
+  threshold + rate × cover days − on hand (a low item with no usage tops up to
+  2× threshold). Quantities are editable; Copy list / CSV export.
+  Deliberate calls: **manual edits never count as usage** (a manual decrease
+  can't be told apart from a stock-take correction), and **an order that was
+  ever restocked contributes nothing** rather than netting restocks inside the
+  window, which would produce negative usage at the window edge. Consequence
+  worth knowing: usage only exists for items linked through a product's bill
+  of materials, so unlinked items rely on their threshold alone. At launch the
+  real data had one item, no thresholds and only test-order usage, so the list
+  was correctly empty.
+- **Not yet built**: estimated-vs-actual time tracking per order (a timer
+  compared against the `est_time` used in pricing).
 
 ## Marketplace orders now deduct inventory (2026-09-06)
 Auto-matched marketplace imports (see `product_id` above) now deduct that
