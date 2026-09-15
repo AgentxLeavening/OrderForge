@@ -633,6 +633,13 @@ page) plus a "💵 owed to you" banner and "Owes $X" on board cards.
   **Not yet tested on a real phone** — worth one check that the Venmo app
   opens with amount and note filled in. Payments made this way still need
   recording on the order's Payments card; Venmo has no API to confirm them.
+- **PayPal pay button — built 2026-09-15.** Same pattern: Settings stores
+  `profiles.paypal_me_name` (migration 029; `lib/paypal.ts` accepts pasted
+  `paypal.me/…` or `paypal.com/paypalme/…` links), and accepted quotes show
+  "Pay $X with PayPal" → `https://paypal.me/<name>/<amount>`. The amount path
+  is a documented PayPal.Me feature (sturdier than Venmo's), but PayPal.Me
+  **cannot prefill a note**, so the page asks the customer to add the order
+  reference by hand. Both buttons share one "Ready to pay?" panel.
 - Next: Stripe (card payments from the quote link), discussed but not started.
 
 ## Known debt / follow-ups
