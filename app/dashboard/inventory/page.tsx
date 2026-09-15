@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { INVENTORY_CATEGORIES, INVENTORY_UNITS, categoryLabel, defaultUnitForCategory, unitShort, isLowStock } from '@/lib/inventory'
 
@@ -139,9 +140,12 @@ export default function InventoryPage() {
       <div className="max-w-5xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-white">Inventory</h1>
-          <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded" onClick={() => setEditing({} as any)}>
-            + New Item
-          </button>
+          <div className="flex items-center gap-4">
+            <Link href="/dashboard/reports/reorder" className="text-sm text-indigo-400 hover:text-indigo-300">Reorder list →</Link>
+            <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded" onClick={() => setEditing({} as any)}>
+              + New Item
+            </button>
+          </div>
         </div>
 
         {loading ? (

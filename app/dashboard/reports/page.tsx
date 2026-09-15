@@ -9,6 +9,11 @@ const REPORTS = [
     description: 'Which products actually earn the most, and on which channel — real margin, not just revenue.',
   },
   {
+    href: '/dashboard/reports/reorder',
+    title: 'Reorder List',
+    description: 'What to buy and how much, sized from how fast orders on every channel are actually using each item.',
+  },
+  {
     href: '/dashboard/reports/tax-export',
     title: 'Tax Season Export',
     description: 'Download revenue, cost basis, and profit for every order in a date range, across every channel, in one CSV.',

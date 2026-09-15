@@ -898,12 +898,20 @@ export default function DashboardPage() {
                   {lowStockItems.length > 4 && ` +${lowStockItems.length - 4} more`}
                 </p>
               </div>
-              <Link
-                href="/dashboard/inventory"
-                className="text-amber-300 hover:text-amber-200 text-sm font-medium whitespace-nowrap"
-              >
-                Manage inventory →
-              </Link>
+              <div className="flex gap-4">
+                <Link
+                  href="/dashboard/inventory"
+                  className="text-amber-300 hover:text-amber-200 text-sm font-medium whitespace-nowrap"
+                >
+                  Manage inventory →
+                </Link>
+                <Link
+                  href="/dashboard/reports/reorder"
+                  className="text-amber-300 hover:text-amber-200 text-sm font-medium whitespace-nowrap"
+                >
+                  Reorder list →
+                </Link>
+              </div>
             </div>
           </div>
         )}
