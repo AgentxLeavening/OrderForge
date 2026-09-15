@@ -280,10 +280,15 @@ extra lookup call since the domain's already known at connect time).
   Marketplace imports map a shipped/fulfilled signal to `'shipped'`, not
   `'complete'` — none of the providers actually tell us a transaction is
   fully closed out, only that it shipped.
-- **Generate Invoice auto-sets status to Quoted** (sending a price *is* the
-  quote) — but the button is only enabled while status is Inquiry or Quoted,
-  otherwise it would keep dragging a further-along order backward every time
-  someone re-generates an invoice.
+- **Generate Invoice is available at any stage except Cancelled** (2026-09-15).
+  It no longer moves the status, except that an untouched **Inquiry** becomes
+  Quoted — pricing an order that has had nothing sent yet is the same signal
+  the quote button gives. Previously it forced `quoted` on every generation,
+  so the button had to be locked to Inquiry/Quoted, which made invoicing
+  finished work impossible: the user hit this and asked about the order of
+  quote vs invoice. Intended flow now: **quote → accepted (→ In Progress) →
+  work → invoice for the balance**, with the quote, not the invoice, being
+  the thing that moves an order forward.
 - **Tracking Number field** (`orders.tracking_number`, migration 022) —
   filling it in for the first time auto-advances status to Shipped, but only
   forward and only from an earlier stage (never touches an order already
