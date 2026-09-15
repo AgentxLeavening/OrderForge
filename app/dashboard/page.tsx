@@ -8,7 +8,15 @@ import DashboardWidget from '@/app/components/DashboardWidget'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import { isLowStock, unitShort } from '@/lib/inventory'
 import { computeOrderEconomics } from '@/lib/pricing'
+import { amountDue, isOwed, summarizePayments, type BillableLine, type PaymentRecord } from '@/lib/payments'
 import Link from 'next/link'
+
+type OwedOrder = {
+  id: string
+  title: string
+  balance: number
+  partial: boolean // a deposit has been taken
+}
 
 type LowStockItem = {
   id: string
@@ -49,6 +57,7 @@ type Order = {
   fee_pct?: number | null
   estimated_shipping?: number | null
   shipping_buyer_covered?: boolean
+  external_source?: string | null
   clients?: {
     name: string
     id?: string
@@ -95,6 +104,7 @@ export default function DashboardPage() {
   const [topRevenueClients, setTopRevenueClients] = useState<{ name: string; total: number }[]>([])
   const [invoiceCounts, setInvoiceCounts] = useState<{ name: string; count: number }[]>([])
   const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
+  const [owedOrders, setOwedOrders] = useState<OwedOrder[]>([])
   const [selectedClientId, setSelectedClientId] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -127,13 +137,15 @@ export default function DashboardPage() {
     const invoiceCountByClient: Record<string, number> = {}
 
     const orderTotals: Record<string, number> = {}
+    const itemsByOrder: Record<string, BillableLine[]> = {}
     if (orderIds.length > 0) {
       const { data: items } = await supabase
         .from('order_items')
-        .select('order_id, quantity, unit_price')
+        .select('order_id, quantity, unit_price, item_type, buyer_covered')
         .in('order_id', orderIds)
 
-      const itemList = (items || []) as { order_id: string; quantity: number; unit_price: number }[]
+      const itemList = (items || []) as ({ order_id: string; quantity: number; unit_price: number } & BillableLine)[]
+      itemList.forEach(it => { (itemsByOrder[it.order_id] ||= []).push(it) })
 
       itemList.forEach(it => {
         const lineTotal = (Number(it.quantity) || 0) * (Number(it.unit_price) || 0)
@@ -153,10 +165,41 @@ export default function DashboardPage() {
     // Use invoices table to compute invoice counts per client (one invoice may exist per order)
     const { data: invoices } = await supabase
       .from('invoices')
-      .select('id, order_id')
+      .select('id, order_id, total, created_at')
       .eq('user_id', userId)
+      .order('created_at', { ascending: true })
 
-    const invoiceList = (invoices || []) as { id: string; order_id: string }[]
+    const invoiceList = (invoices || []) as { id: string; order_id: string; total: number | null; created_at: string }[]
+
+    // Payment balances, using the same rules as the order page's Payments card
+    // (lib/payments.ts). Ascending order above means the last write per order
+    // wins, i.e. the latest invoice / most recently accepted quote.
+    const [{ data: acceptedQuotes }, { data: payments }] = await Promise.all([
+      supabase.from('quotes').select('order_id, snapshot, responded_at')
+        .eq('user_id', userId).eq('status', 'accepted').order('responded_at', { ascending: true }),
+      supabase.from('order_payments').select('order_id, amount, kind').eq('user_id', userId),
+    ])
+    const invoiceTotalByOrder: Record<string, number | null> = {}
+    invoiceList.forEach(inv => { invoiceTotalByOrder[inv.order_id] = inv.total })
+    const quoteTotalByOrder: Record<string, number | null> = {}
+    ;(acceptedQuotes || []).forEach(q => {
+      quoteTotalByOrder[q.order_id] = (q.snapshot as { total?: number } | null)?.total ?? null
+    })
+    const paymentsByOrder: Record<string, PaymentRecord[]> = {}
+    ;(payments || []).forEach(p => { (paymentsByOrder[p.order_id] ||= []).push(p) })
+
+    const owed: OwedOrder[] = []
+    ordersData.forEach(o => {
+      if (o.external_source) return
+      const due = amountDue({
+        lineItems: itemsByOrder[o.id] || [],
+        latestInvoiceTotal: invoiceTotalByOrder[o.id],
+        acceptedQuoteTotal: quoteTotalByOrder[o.id],
+      })
+      const summary = summarizePayments({ due: due.amount, payments: paymentsByOrder[o.id] || [], isMarketplace: false })
+      if (isOwed(summary, o.status)) owed.push({ id: o.id, title: o.title, balance: summary.balance, partial: summary.status === 'partial' })
+    })
+    setOwedOrders(owed.sort((a, b) => b.balance - a.balance))
     invoiceList.forEach(inv => {
       const order = ordersData.find(o => o.id === inv.order_id)
       const clientName = order?.client_id
@@ -597,6 +640,8 @@ export default function DashboardPage() {
   }
 
   // One card, used by both the board columns and the archive sections below.
+  const owedById = new Map(owedOrders.map(o => [o.id, o]))
+
   const renderOrderCard = (order: Order, index: number) => {
     const clientName = Array.isArray(order.clients)
       ? order.clients[0]?.name || ''
@@ -629,6 +674,9 @@ export default function DashboardPage() {
                 <p className="text-white text-sm font-medium leading-snug truncate">{order.title}</p>
                 <div className="flex items-center gap-2 text-[11px] leading-tight">
                   <span className="text-gray-500 font-mono truncate">{order.order_number}</span>
+                  {owedById.has(order.id) && (
+                    <span className="shrink-0 text-emerald-400">Owes ${owedById.get(order.id)!.balance.toFixed(2)}</span>
+                  )}
                   {order.due_date && (
                     <span className={`shrink-0 ${isOverdue(order.due_date) ? 'text-red-400' : 'text-gray-500'}`}>
                       Due {new Date(order.due_date).toLocaleDateString()}
@@ -912,6 +960,23 @@ export default function DashboardPage() {
                   Reorder list →
                 </Link>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Money owed — orders with an unpaid balance (see isOwed in lib/payments.ts) */}
+        {owedOrders.length > 0 && (
+          <div className="mb-8 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4">
+            <p className="text-emerald-300 font-semibold">
+              💵 ${owedOrders.reduce((s, o) => s + o.balance, 0).toFixed(2)} owed to you · {owedOrders.length} {owedOrders.length === 1 ? 'order' : 'orders'}
+            </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-sm">
+              {owedOrders.slice(0, 5).map(o => (
+                <Link key={o.id} href={`/dashboard/orders/${o.id}`} className="text-emerald-200/80 hover:text-emerald-100">
+                  {o.title} — ${o.balance.toFixed(2)}{o.partial ? ' left' : ''}
+                </Link>
+              ))}
+              {owedOrders.length > 5 && <span className="text-emerald-200/60">+{owedOrders.length - 5} more</span>}
             </div>
           </div>
         )}
