@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { generateInvoicePdf } from '@/lib/generateInvoicePdf'
 import { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 import { computeOrderEconomics } from '@/lib/pricing'
+import OrderPayments from '@/app/components/OrderPayments'
 
 
 type Order = {
@@ -30,6 +31,7 @@ type Order = {
   shipping_buyer_covered: boolean
   tracking_number: string | null
   product_id: string | null
+  external_source: string | null
 }
 
 type LineItem = {
@@ -115,6 +117,8 @@ export default function OrderDetailPage() {
   const [estimatedShipping, setEstimatedShipping] = useState('')
   const [shippingBuyerCovered, setShippingBuyerCovered] = useState(true)
   const [trackingNumber, setTrackingNumber] = useState('')
+  // Bumped after creating an invoice, so the Payments card re-reads the amount due.
+  const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0)
 
   // New line item
   const [newDesc, setNewDesc] = useState('')
@@ -388,6 +392,7 @@ const handleGenerateInvoice = async () => {
     due_date: dueDate || null,
     notes,
   })
+  setPaymentsRefreshKey(k => k + 1)
 
   // Generating an invoice functions as sending the seller's price to the
   // buyer, so auto-advance the order to Quoted.
@@ -750,6 +755,16 @@ const handleGenerateInvoice = async () => {
             </div>
           )}
         </div>
+
+        {order && (
+          <OrderPayments
+            orderId={id}
+            lineItems={lineItems}
+            // Imported orders were paid on the marketplace before they arrived.
+            marketplaceLabel={order.external_source ? channelLabel(order.external_source) || order.external_source : null}
+            refreshKey={paymentsRefreshKey}
+          />
+        )}
 
               {/* Invoice Button — generating one auto-advances status to
                   Quoted, so only allow it while the order is still at an

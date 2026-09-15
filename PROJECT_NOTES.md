@@ -594,6 +594,35 @@ Decline -> acceptance moves the order Quoted -> In Progress on its own.
 project, and deposits are the most likely genuine gap for commission work),
 e-signature, expiry emails, and a quote PDF — the link is the deliverable.
 
+## Payment tracking (2026-09-15)
+Records payments taken **outside** OrderForge (Venmo, cash at craft fairs,
+PayPal, Cash App, Zelle, card, check...) against an order. No money moves
+through the app; a later Stripe integration would add rows to the same table.
+Table `order_payments` (migration 027), logic in `lib/payments.ts` (tests:
+`test/payments.test.ts`), UI in `app/components/OrderPayments.tsx` (order
+page) plus a "💵 owed to you" banner and "Owes $X" on board cards.
+
+- **One row per payment, not a paid flag** — commissions are paid in parts
+  (deposit, then balance). `amount` is always positive; `kind` is
+  `payment` | `refund`. RLS: own rows only, and the insert check also requires
+  the order to be yours. Verified: anon can't read, anon insert → 401.
+- **Amount due precedence**: latest invoice total (includes tax) → latest
+  accepted quote total (includes tax) → billable line items (no tax; seller-
+  covered shipping bills at zero, same as `billableAmount`/`billableLineTotal`).
+  The card says which source it used. Consequence: an order that should carry
+  tax needs an invoice or quote for the balance to include it.
+- **One cent of tolerance** (`BALANCE_TOLERANCE`) — invoice tax is stored
+  unrounded, so paying the displayed amount could otherwise leave "$0.01 left".
+- **Marketplace imports** (`external_source` set) show "Paid via Etsy/eBay/
+  Shopify", never a balance.
+- **"Owed" rules** (`isOwed`): never cancelled; unpaid Inquiry/Quoted orders
+  aren't owed (nothing agreed yet) unless a deposit was taken; everything else
+  with a remaining balance is. At launch this showed 1 order ($60, invoiced).
+- Known gap: the dashboard computes balances on load, so dragging a card
+  between statuses doesn't update the banner until refresh.
+- Next steps discussed with the user: a **Venmo pay link** on the quote page
+  (most of their in-person customers already pay by Venmo), then Stripe.
+
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —
   **implemented 2026-09-14**, no longer a blocker for onboarding other users.
