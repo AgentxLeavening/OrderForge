@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
 import { isExpired, canRespond, type QuoteSnapshot, type QuoteStatus } from '@/lib/quotes'
+import { normalizeVenmoUsername, venmoPayUrl } from '@/lib/venmo'
 import QuoteResponse from './QuoteResponse'
 
 export const metadata: Metadata = {
@@ -25,11 +26,19 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
 
   const { data: quote } = await admin
     .from('quotes')
-    .select('id, token, status, valid_until, snapshot, message, sent_at, responded_at')
+    .select('id, user_id, token, status, valid_until, snapshot, message, sent_at, responded_at')
     .eq('token', token)
     .maybeSingle()
 
   if (!quote) notFound()
+
+  // Only the Venmo handle is read from the seller's profile — nothing else
+  // about the seller reaches this public page.
+  const { data: seller } = await admin
+    .from('profiles')
+    .select('venmo_username')
+    .eq('id', quote.user_id)
+    .maybeSingle()
 
   // First open marks it seen, so the seller can tell "not looked at yet" from
   // "read and ignored" — the question a quote actually raises.
@@ -45,6 +54,9 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
   const status = quote.status as QuoteStatus
   const expired = isExpired(quote.valid_until)
   const openForResponse = canRespond(status, quote.valid_until)
+
+  // Re-validated at render: never put an unchecked value into a link.
+  const venmo = normalizeVenmoUsername(seller?.venmo_username)
 
   const money = (n: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(n) || 0)
@@ -140,6 +152,33 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
         )}
 
         {openForResponse && <QuoteResponse token={quote.token} />}
+
+        {/* Pay link once the customer has agreed — paying before accepting
+            would be backwards. The handle and amount are also shown as text:
+            Venmo's prefilled links aren't officially documented, and if they
+            stop prefilling, the customer can still pay by hand. */}
+        {status === 'accepted' && venmo && snapshot.total > 0 && (
+          <div className="mt-6 bg-gray-900 border border-gray-800 rounded-2xl p-5">
+            <p className="text-white font-semibold">Ready to pay?</p>
+            <p className="text-gray-400 text-sm mt-1">
+              {snapshot.businessName} takes Venmo. The button opens Venmo with the amount and reference filled in.
+            </p>
+            <a
+              href={venmoPayUrl(venmo, snapshot.total, `${snapshot.orderTitle} (${snapshot.orderNumber})`)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 mt-4 bg-[#008CFF] hover:bg-[#0074d4] text-white font-semibold px-5 py-2.5 rounded-xl transition"
+            >
+              Pay {money(snapshot.total)} with Venmo
+            </a>
+            <p className="text-gray-500 text-xs mt-3">
+              Paying another way, or the button doesn’t open? Send {money(snapshot.total)} to{' '}
+              <span className="text-gray-300 font-medium">@{venmo}</span> with reference{' '}
+              <span className="text-gray-300 font-medium">{snapshot.orderNumber}</span>. If you agreed on a deposit,
+              you can change the amount in Venmo.
+            </p>
+          </div>
+        )}
 
         <p className="text-gray-600 text-xs mt-12">
           Sent {new Date(quote.sent_at).toLocaleDateString()} · Reference {snapshot.orderNumber}

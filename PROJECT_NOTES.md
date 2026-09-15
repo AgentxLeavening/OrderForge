@@ -620,8 +620,20 @@ page) plus a "💵 owed to you" banner and "Owes $X" on board cards.
   with a remaining balance is. At launch this showed 1 order ($60, invoiced).
 - Known gap: the dashboard computes balances on load, so dragging a card
   between statuses doesn't update the banner until refresh.
-- Next steps discussed with the user: a **Venmo pay link** on the quote page
-  (most of their in-person customers already pay by Venmo), then Stripe.
+- **Venmo pay button — built 2026-09-15.** Settings → "Getting paid" stores
+  `profiles.venmo_username` (migration 028; input normalised by
+  `lib/venmo.ts`, which accepts `@name` or a pasted profile URL). Once a
+  customer **accepts** a quote, `/quote/<token>` shows "Pay $X with Venmo"
+  linking to `https://venmo.com/<user>?txn=pay&amount=<total>&note=<title (ORD-…)>`.
+  That URL format is widely used but **not officially documented** by Venmo
+  (their `venmo://` deep links reportedly broke in 2024), so the page also
+  prints the @handle, amount and reference as text — if prefilling ever
+  stops, the link still opens the profile and the customer can pay by hand.
+  The public page reads only `venmo_username` from the seller's profile.
+  **Not yet tested on a real phone** — worth one check that the Venmo app
+  opens with amount and note filled in. Payments made this way still need
+  recording on the order's Payments card; Venmo has no API to confirm them.
+- Next: Stripe (card payments from the quote link), discussed but not started.
 
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —

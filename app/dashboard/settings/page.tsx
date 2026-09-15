@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { normalizeVenmoUsername } from '@/lib/venmo'
 
 type ProviderId = 'etsy' | 'ebay' | 'shopify' | 'tiktok' | 'facebook'
 
@@ -41,6 +42,8 @@ export default function SettingsPage() {
   const [markup, setMarkup] = useState('')
   const [feePct, setFeePct] = useState('')
   const [taxRate, setTaxRate] = useState('')
+  const [venmoUsername, setVenmoUsername] = useState('')
+  const [venmoError, setVenmoError] = useState('')
 
   const [connections, setConnections] = useState<Connection[]>([])
   const [connectionsLoading, setConnectionsLoading] = useState(true)
@@ -68,10 +71,11 @@ export default function SettingsPage() {
       if (!user) { setLoading(false); return }
       const { data } = await supabase
         .from('profiles')
-        .select('business_name, hourly_rate, default_markup, default_fee_pct, default_tax_rate')
+        .select('business_name, hourly_rate, default_markup, default_fee_pct, default_tax_rate, venmo_username')
         .eq('id', user.id)
         .single()
       if (data) {
+        setVenmoUsername(data.venmo_username || '')
         setBusinessName(data.business_name || '')
         setHourlyRate(data.hourly_rate ?? '')
         setMarkup(data.default_markup ?? '')
@@ -121,6 +125,16 @@ export default function SettingsPage() {
   }
 
   const save = async () => {
+    // Validate before saving anything, so a typo'd handle can't silently blank
+    // the pay button on every quote.
+    const venmo = normalizeVenmoUsername(venmoUsername)
+    if (venmoUsername.trim() && !venmo) {
+      setVenmoError('That doesn’t look like a Venmo username — letters, numbers, hyphens and underscores only.')
+      return
+    }
+    setVenmoError('')
+    setVenmoUsername(venmo || '')
+
     setSaving(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setSaving(false); return }
@@ -133,6 +147,7 @@ export default function SettingsPage() {
         default_markup: num(markup),
         default_fee_pct: num(feePct),
         default_tax_rate: num(taxRate),
+        venmo_username: venmo,
       })
       .eq('id', user.id)
     if (error) console.warn('Failed saving settings', error)
@@ -179,6 +194,24 @@ export default function SettingsPage() {
                   <input value={taxRate} onChange={e => setTaxRate(e.target.value)} type="number" step="0.1" className={inputClass} placeholder="e.g. 7" />
                 </div>
               </div>
+            </div>
+
+            <div>
+              <h2 className="text-white font-semibold mb-1">Getting paid</h2>
+              <p className="text-gray-500 text-xs mb-4">Adds a “Pay with Venmo” button to quotes once a customer accepts, with the total and order reference filled in.</p>
+              <label className={labelClass}>Venmo username</label>
+              <div className="flex items-center">
+                <span className="bg-gray-800 border border-r-0 border-gray-700 rounded-l px-3 py-2 text-gray-500">@</span>
+                <input
+                  value={venmoUsername}
+                  onChange={e => { setVenmoUsername(e.target.value); setVenmoError('') }}
+                  className={`${inputClass} rounded-l-none`}
+                  placeholder="your-venmo-name"
+                />
+              </div>
+              {venmoError
+                ? <p className="text-red-400 text-xs mt-1">{venmoError}</p>
+                : <p className="text-gray-600 text-xs mt-1">Shown to customers on quotes. You can paste your Venmo profile link too. Leave blank to hide the button.</p>}
             </div>
 
             <div className="flex items-center gap-3">
