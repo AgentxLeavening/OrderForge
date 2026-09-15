@@ -166,6 +166,20 @@ export const ebayProvider: MarketplaceProvider = {
       url = json.next || null
     }
 
+    // Delivery comes from a different API — see fetchDeliveredOrderIds. A
+    // failure there must not block importing new orders, so it degrades to
+    // "nothing delivered this time": orders simply stay Shipped until a later
+    // sync reads it successfully (the import is idempotent). Logged, since a
+    // run of these is the thing to look for if auto-complete goes quiet.
+    let delivered = new Set<string>()
+    if (orders.some(o => o.orderFulfillmentStatus === 'FULFILLED')) {
+      try {
+        delivered = await fetchDeliveredOrderIds(accessToken)
+      } catch (e) {
+        console.warn('[ebay] delivery lookup failed; orders stay Shipped this sync', e instanceof Error ? e.message : e)
+      }
+    }
+
     return orders.map((o): NormalizedOrder => {
       const items: NormalizedOrder['items'] = (o.lineItems || []).map((li: any) => ({
         description: li.title || 'eBay item',
@@ -194,15 +208,16 @@ export const ebayProvider: MarketplaceProvider = {
       // an earlier guess at 'PARTIALLY_FULFILLED' was a value eBay never
       // sends). IN_PROGRESS means some but not all packages have shipped, so
       // it correctly falls through to 'in_progress' rather than 'shipped'.
-      // eBay never reports *delivered* — there is no such status here, and
-      // ShippingFulfillment carries only a tracking number, shipped date, and
-      // carrier code. Orders therefore stop at 'shipped'; advancing them to
-      // 'complete' would need a carrier tracking lookup (see PROJECT_NOTES.md).
+      // The Fulfillment API has no delivered status; a fully shipped order that
+      // the Trading API reports delivered moves to 'complete'.
       const shipped = o.orderFulfillmentStatus === 'FULFILLED'
+      const status: NormalizedOrder['status'] = !shipped
+        ? 'in_progress'
+        : delivered.has(String(o.orderId)) ? 'complete' : 'shipped'
       return {
         externalOrderId: String(o.orderId),
         buyerName: o.buyer?.username || null,
-        status: shipped ? 'shipped' : 'in_progress',
+        status,
         itemsSubtotal,
         shippingAndTax,
         buyerCoversShipping: true,
@@ -211,4 +226,87 @@ export const ebayProvider: MarketplaceProvider = {
       }
     })
   },
+}
+
+// Delivery status lives in eBay's older XML Trading API, not the Fulfillment
+// API: GetOrders returns ShippingPackageInfo.ActualDeliveryTime once the
+// carrier reports delivery (the same data behind eBay's "delivered" emails).
+// Verified live 2026-09-15 against the production account:
+//   - the Trading API accepts our existing OAuth token (sell.fulfillment
+//     scope) via X-EBAY-API-IAF-TOKEN — no extra scope, no reconnect
+//   - 50 of 67 shipped orders carried ActualDeliveryTime; the rest had
+//     tracking but no delivery recorded, and simply stay Shipped
+//   - Trading OrderID is the same "12-34567-89012" id as the Fulfillment API's
+//     orderId, so results match imported orders exactly
+//   - GetOrders only reaches 90 days back — including lookups by OrderID,
+//     which reject older ids as "invalid". Older orders can't be checked.
+// One call per page of 100 per sync, against a daily Trading API quota in the
+// thousands.
+const TRADING_LOOKBACK_DAYS = 89 // eBay's limit is 90; stay clear of the edge
+
+async function fetchDeliveredOrderIds(accessToken: string): Promise<Set<string>> {
+  const delivered = new Set<string>()
+  const from = new Date(Date.now() - TRADING_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  const to = new Date().toISOString()
+
+  // Capped at 10 pages (1000 orders) — a loop guard, same as the order fetch.
+  for (let page = 1; page <= 10; page++) {
+    const body = `<?xml version="1.0" encoding="utf-8"?>
+<GetOrdersRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <CreateTimeFrom>${from}</CreateTimeFrom>
+  <CreateTimeTo>${to}</CreateTimeTo>
+  <OrderRole>Seller</OrderRole>
+  <DetailLevel>ReturnAll</DetailLevel>
+  <Pagination><EntriesPerPage>100</EntriesPerPage><PageNumber>${page}</PageNumber></Pagination>
+</GetOrdersRequest>`
+
+    const res = await fetch(`${API_HOST}/ws/api.dll`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml',
+        'X-EBAY-API-COMPATIBILITY-LEVEL': '1193',
+        'X-EBAY-API-CALL-NAME': 'GetOrders',
+        'X-EBAY-API-SITEID': '0',
+        'X-EBAY-API-IAF-TOKEN': accessToken,
+      },
+      body,
+    })
+    const xml = await res.text()
+    const result = parseTradingGetOrders(xml)
+    // Trading API reports most errors as HTTP 200 with Ack=Failure.
+    if (!res.ok || result.ack === 'Failure') {
+      throw new Error(`eBay GetOrders failed: ${res.status} ${result.errors.join('; ') || xml.slice(0, 300)}`)
+    }
+    result.deliveredOrderIds.forEach(id => delivered.add(id))
+    if (!result.hasMore) break
+  }
+  return delivered
+}
+
+const xmlTag = (s: string, t: string) => [...s.matchAll(new RegExp(`<${t}>([^<]*)</${t}>`, 'g'))].map(m => m[1])
+
+/**
+ * Parses a Trading API GetOrders response. An order counts as delivered only
+ * when it has at least one ShippingPackageInfo and every one of them carries
+ * ActualDeliveryTime — a multi-package order with one box still in transit is
+ * not done. (The same package info repeats under each transaction; duplicates
+ * don't change an "every" check.)
+ */
+export function parseTradingGetOrders(xml: string) {
+  const deliveredOrderIds: string[] = []
+  for (const block of xml.split('<Order>').slice(1)) {
+    const orderXml = block.split('</Order>')[0]
+    const orderId = xmlTag(orderXml, 'OrderID')[0]
+    if (!orderId) continue
+    const packages = orderXml.split('<ShippingPackageInfo>').slice(1).map(p => p.split('</ShippingPackageInfo>')[0])
+    if (packages.length > 0 && packages.every(p => xmlTag(p, 'ActualDeliveryTime')[0])) {
+      deliveredOrderIds.push(orderId)
+    }
+  }
+  return {
+    ack: xmlTag(xml, 'Ack')[0] || null,
+    errors: xmlTag(xml, 'LongMessage'),
+    hasMore: xmlTag(xml, 'HasMoreOrders')[0] === 'true',
+    deliveredOrderIds,
+  }
 }

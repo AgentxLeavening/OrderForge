@@ -245,11 +245,14 @@ async function importOrders(
       // it behind an extra per-order call. Only worth spending when the order
       // looks shipped and we still have nothing — see fetchTrackingNumber's
       // comment in ebay.ts on why this isn't done for every order every sync.
-      if (o.status === 'shipped') tracking.shipped++
+      // Delivered orders have shipped too — an eBay order can now arrive
+      // straight at 'complete' and must still get its tracking filled in.
+      const hasShipped = o.status === 'shipped' || o.status === 'complete'
+      if (hasShipped) tracking.shipped++
       if (storedTracking) tracking.alreadyStored++
       if (o.trackingNumber) tracking.fromPayload++
 
-      if (!trackingNumber && o.status === 'shipped' && provider.fetchTrackingNumber) {
+      if (!trackingNumber && hasShipped && provider.fetchTrackingNumber) {
         tracking.lookups++
         try {
           trackingNumber = await provider.fetchTrackingNumber({
