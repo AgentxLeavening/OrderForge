@@ -260,13 +260,13 @@ export default function DashboardPage() {
 
     const newStatus = destination.droppableId
 
-    // Complete and Cancelled are both one-way doors once dropped: a synced
-    // marketplace order never automatically moves out of either again (see
-    // syncProviderOrders' status-rank guard in lib/integrations/sync.ts), so
-    // an accidental drag here sticks until manually fixed. Confirm first.
-    if (newStatus === 'complete') {
-      if (!confirm('Mark this order as Complete?\n\nFuture marketplace syncs won\'t move it out of Complete automatically — you\'ll need to drag it back yourself if that\'s wrong.')) return
-    } else if (newStatus === 'cancelled') {
+    // Cancelled still confirms: it restocks materials, and undoing that means
+    // fixing inventory by hand. Complete used to confirm as well — it's also a
+    // one-way door for marketplace syncs (see syncProviderOrders' status-rank
+    // guard) — but completing orders is routine and the prompt got in the way
+    // of clearing a board. Dragging an order back out of Complete costs
+    // nothing, so the warning wasn't worth the friction.
+    if (newStatus === 'cancelled') {
       if (!confirm('Cancel this order?\n\nThis restocks any materials it deducted, and future marketplace syncs won\'t move it out of Cancelled automatically.')) return
     }
 

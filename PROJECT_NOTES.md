@@ -289,6 +289,10 @@ extra lookup call since the domain's already known at connect time).
   quote vs invoice. Intended flow now: **quote → accepted (→ In Progress) →
   work → invoice for the balance**, with the quote, not the invoice, being
   the thing that moves an order forward.
+- **Dragging a card to Complete no longer confirms** (2026-09-15) — the user
+  completes orders in batches by hand and the prompt was pure friction.
+  Dropping into **Cancelled** still confirms, because that restocks materials
+  and undoing it means fixing inventory by hand.
 - **Tracking Number field** (`orders.tracking_number`, migration 022) —
   filling it in for the first time auto-advances status to Shipped, but only
   forward and only from an earlier stage (never touches an order already
