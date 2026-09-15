@@ -639,11 +639,25 @@ e-signature, expiry emails, and a quote PDF — the link is the deliverable.
   `order.delivered`. The eBay reasoning was sound and got over-generalised to
   every provider without checking Etsy's webhook surface, which we didn't
   know existed.
-  - **eBay**: still no delivery signal. `orderFulfillmentStatus` stops at
-    `FULFILLED`, and `ShippingFulfillment` carries only
+  - **eBay — SOLVED 2026-09-15, and the claim below this line was wrong.**
+    The *Fulfillment* API has no delivery signal, but eBay's older XML
+    **Trading API** does: `GetOrders` returns
+    `ShippingPackageInfo.ActualDeliveryTime` (the data behind eBay's own
+    "delivered" emails — the user pointed this out). Built into
+    `fetchDeliveredOrderIds` in `lib/integrations/ebay.ts`; a fully shipped
+    order with every package delivered normalizes to `complete`. Verified
+    live against production before building: our existing `sell.fulfillment`
+    token works on the Trading API (no reconnect), 50 of 67 shipped orders
+    had a delivery time, Trading `OrderID` equals our `external_order_id`
+    69/69, and a dry run of the real parser predicted exactly 48 orders
+    moving to Complete (user chose to backfill them all). Limits: GetOrders
+    only reaches **90 days** back, even when asked by OrderID, so older
+    orders can't be checked and stay Shipped; a failed lookup logs
+    `[ebay] delivery lookup failed` and leaves orders Shipped for that sync
+    rather than blocking imports. No paid tracking service needed.
+  - ~~eBay: still no delivery signal~~ (superseded above). `orderFulfillmentStatus`
+    stops at `FULFILLED`, and `ShippingFulfillment` carries only
     `shipmentTrackingNumber`, `shippedDate` and `shippingCarrierCode`.
-    A carrier API or aggregator (EasyPost, Shippo) keyed off the tracking
-    number we now store remains the only real route here.
   - **Etsy**: can advance to Complete natively off `order.delivered`, no
     carrier integration and no guessing.
   - Still rejected: a time-based heuristic ("Complete N days after
