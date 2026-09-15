@@ -535,6 +535,49 @@ against the same route; no app code changes.
 - Safe to run often because the sync is idempotent and skips unchanged orders;
   a delayed or skipped GitHub run just means a later import.
 
+## Customer-facing quotes (2026-09-14)
+The document a commission seller sends *before* the work, and the thing the
+customer accepts. Until now the invoice PDF stood in for it — the tell was
+that generating an invoice set the order status to `quoted`.
+
+Flow: order page -> **Send quote** -> a public link (copied to clipboard) ->
+customer opens `/quote/<token>`, sees line items and total, and hits Accept or
+Decline -> acceptance moves the order Quoted -> In Progress on its own.
+
+- **The snapshot is the important decision.** `quotes.snapshot` (jsonb) stores
+  the line items and totals **as sent**, rather than reading live order data.
+  Without it, editing an order later would retroactively change what the
+  customer already agreed to, and there'd be no record of the agreed price.
+  Revisions fall out for free: a second quote row on the same order, never
+  mutating the first.
+- **The public page is unauthenticated by design** — the customer has no
+  account, and the unguessable token (32 random bytes, base64url) stands in
+  for one. Same discipline as the marketplace webhooks.
+- **`quotes` has RLS with NO anonymous policy.** The public page reads and
+  writes through the service-role client, filtered by token on the server. A
+  policy permissive enough for an anon reader to fetch "the row matching this
+  token" is also permissive enough to enumerate every row, because the filter
+  would come from the caller rather than the policy. **Verified**: anon can't
+  list quotes, and can't fetch one even given the exact token.
+- **The customer sees line items and totals only.** Material cost, labour rate
+  and markup are the seller's numbers and never reach the page.
+- **Acceptance advances status forward only**, and only from inquiry/quoted —
+  same rule as the sync's status-rank guard and the tracking auto-advance. An
+  accepted quote can't drag a shipped or complete order backwards (verified
+  against a complete order: status unchanged).
+- Amounts are built server-side in `app/api/quotes/create/route.ts` from the
+  order's own rows. The browser never names the price it will be held to.
+- `billableLineTotal` in `lib/quotes.ts` must stay in step with
+  `billableAmount` on the order detail page — a shipping line the buyer isn't
+  covering bills at zero in both. If they diverge, the customer sees a
+  different total from the seller. Covered by `test/quotes.test.ts`.
+- Responses are final and one-shot: a second click gets 409, an unknown token
+  gets 404, an expired quote can be read but not answered.
+
+**Deliberately not in this version**: payments/deposits (Stripe is its own
+project, and deposits are the most likely genuine gap for commission work),
+e-signature, expiry emails, and a quote PDF — the link is the deliverable.
+
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —
   **implemented 2026-09-14**, no longer a blocker for onboarding other users.

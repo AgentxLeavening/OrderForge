@@ -110,6 +110,8 @@ export default function OrderDetailPage() {
   const [buyerName, setBuyerName] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
+  const [sendingQuote, setSendingQuote] = useState(false)
+  const [quoteLink, setQuoteLink] = useState('')
   const [estimatedShipping, setEstimatedShipping] = useState('')
   const [shippingBuyerCovered, setShippingBuyerCovered] = useState(true)
   const [trackingNumber, setTrackingNumber] = useState('')
@@ -321,6 +323,33 @@ export default function OrderDetailPage() {
       </div>
     )
   }
+// Creates a customer-facing quote and hands back its public link. The
+  // snapshot is built server-side from the order's own rows — the quote is what
+  // the customer will be held to, so the browser doesn't get to name the price.
+  // See app/api/quotes/create/route.ts.
+  const handleSendQuote = async () => {
+    setSendingQuote(true)
+    try {
+      const res = await fetch('/api/quotes/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: id }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error || 'Could not create the quote.')
+
+      const link = `${window.location.origin}/quote/${json.token}`
+      setQuoteLink(link)
+      // Clipboard can fail (permissions, insecure context). The link is shown
+      // on screen either way, so a copy failure isn't worth surfacing.
+      try { await navigator.clipboard.writeText(link) } catch { /* shown on screen regardless */ }
+      if (status === 'inquiry') setStatus('quoted')
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not create the quote.')
+    }
+    setSendingQuote(false)
+  }
+
 const handleGenerateInvoice = async () => {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user || !order) return
@@ -727,15 +756,54 @@ const handleGenerateInvoice = async () => {
                   early stage; otherwise it would keep dragging a
                   further-along order's status backward. */}
         <div className="flex flex-col items-end gap-1.5">
-          <button
-            onClick={handleGenerateInvoice}
-            disabled={!['inquiry', 'quoted'].includes(status)}
-            className="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-3 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-600"
-          >
-            Generate Invoice →
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleSendQuote}
+              disabled={sendingQuote || lineItems.length === 0}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-6 py-3 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {sendingQuote ? 'Creating…' : 'Send quote →'}
+            </button>
+            <button
+              onClick={handleGenerateInvoice}
+              disabled={!['inquiry', 'quoted'].includes(status)}
+              className="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-3 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-600"
+            >
+              Generate Invoice →
+            </button>
+          </div>
+          {quoteLink && (
+            <div className="w-full max-w-md bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-3 mt-1">
+              <p className="text-indigo-300 text-xs font-medium">
+                Quote link created and copied to your clipboard — send it to your customer.
+              </p>
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  readOnly
+                  value={quoteLink}
+                  onFocus={e => e.currentTarget.select()}
+                  className="flex-1 bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-gray-300 text-xs font-mono"
+                />
+                <a
+                  href={quoteLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-indigo-300 hover:text-white px-2 py-1.5 whitespace-nowrap"
+                >
+                  Preview
+                </a>
+              </div>
+              <p className="text-gray-500 text-xs mt-2">
+                Anyone with this link can view and accept the quote. It shows line items and the
+                total — never your costs or markup.
+              </p>
+            </div>
+          )}
+          {lineItems.length === 0 && (
+            <p className="text-gray-600 text-xs">Add a line item before sending a quote.</p>
+          )}
           {!['inquiry', 'quoted'].includes(status) && (
-            <p className="text-gray-600 text-xs">Only available while the order is Inquiry or Quoted.</p>
+            <p className="text-gray-600 text-xs">Invoice only available while the order is Inquiry or Quoted.</p>
           )}
         </div>
       </main>
