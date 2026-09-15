@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
 import { isExpired, canRespond, type QuoteSnapshot, type QuoteStatus } from '@/lib/quotes'
 import { normalizeVenmoUsername, venmoPayUrl } from '@/lib/venmo'
+import { normalizePaypalMeName, paypalPayUrl } from '@/lib/paypal'
 import QuoteResponse from './QuoteResponse'
 
 export const metadata: Metadata = {
@@ -32,11 +33,11 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
 
   if (!quote) notFound()
 
-  // Only the Venmo handle is read from the seller's profile — nothing else
+  // Only the payment handles are read from the seller's profile — nothing else
   // about the seller reaches this public page.
   const { data: seller } = await admin
     .from('profiles')
-    .select('venmo_username')
+    .select('venmo_username, paypal_me_name')
     .eq('id', quote.user_id)
     .maybeSingle()
 
@@ -57,6 +58,7 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
 
   // Re-validated at render: never put an unchecked value into a link.
   const venmo = normalizeVenmoUsername(seller?.venmo_username)
+  const paypal = normalizePaypalMeName(seller?.paypal_me_name)
 
   const money = (n: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(n) || 0)
@@ -153,30 +155,54 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
 
         {openForResponse && <QuoteResponse token={quote.token} />}
 
-        {/* Pay link once the customer has agreed — paying before accepting
-            would be backwards. The handle and amount are also shown as text:
-            Venmo's prefilled links aren't officially documented, and if they
-            stop prefilling, the customer can still pay by hand. */}
-        {status === 'accepted' && venmo && snapshot.total > 0 && (
+        {/* Pay links once the customer has agreed — paying before accepting
+            would be backwards. Handles, amount and reference are also shown
+            as text: Venmo's prefilled links aren't officially documented, and
+            PayPal.Me can't prefill a note, so the customer may need them. */}
+        {status === 'accepted' && (venmo || paypal) && snapshot.total > 0 && (
           <div className="mt-6 bg-gray-900 border border-gray-800 rounded-2xl p-5">
             <p className="text-white font-semibold">Ready to pay?</p>
             <p className="text-gray-400 text-sm mt-1">
-              {snapshot.businessName} takes Venmo. The button opens Venmo with the amount and reference filled in.
+              {snapshot.businessName} takes {[venmo && 'Venmo', paypal && 'PayPal'].filter(Boolean).join(' and ')}.
+              {' '}Please include reference <span className="text-gray-200 font-medium">{snapshot.orderNumber}</span> with your payment.
             </p>
-            <a
-              href={venmoPayUrl(venmo, snapshot.total, `${snapshot.orderTitle} (${snapshot.orderNumber})`)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 mt-4 bg-[#008CFF] hover:bg-[#0074d4] text-white font-semibold px-5 py-2.5 rounded-xl transition"
-            >
-              Pay {money(snapshot.total)} with Venmo
-            </a>
-            <p className="text-gray-500 text-xs mt-3">
-              Paying another way, or the button doesn’t open? Send {money(snapshot.total)} to{' '}
-              <span className="text-gray-300 font-medium">@{venmo}</span> with reference{' '}
-              <span className="text-gray-300 font-medium">{snapshot.orderNumber}</span>. If you agreed on a deposit,
-              you can change the amount in Venmo.
-            </p>
+            <div className="flex flex-wrap gap-3 mt-4">
+              {venmo && (
+                <a
+                  href={venmoPayUrl(venmo, snapshot.total, `${snapshot.orderTitle} (${snapshot.orderNumber})`)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 bg-[#008CFF] hover:bg-[#0074d4] text-white font-semibold px-5 py-2.5 rounded-xl transition"
+                >
+                  Pay {money(snapshot.total)} with Venmo
+                </a>
+              )}
+              {paypal && (
+                <a
+                  href={paypalPayUrl(paypal, snapshot.total)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 bg-[#FFC439] hover:bg-[#f2b72c] text-[#003087] font-semibold px-5 py-2.5 rounded-xl transition"
+                >
+                  Pay {money(snapshot.total)} with PayPal
+                </a>
+              )}
+            </div>
+            <ul className="text-gray-500 text-xs mt-3 space-y-1">
+              {venmo && (
+                <li>
+                  Venmo: send to <span className="text-gray-300 font-medium">@{venmo}</span> — the button fills in the
+                  amount and reference, if it doesn’t, add them by hand.
+                </li>
+              )}
+              {paypal && (
+                <li>
+                  PayPal: <span className="text-gray-300 font-medium">paypal.me/{paypal}</span> — the amount is filled
+                  in; add {snapshot.orderNumber} as the note.
+                </li>
+              )}
+              <li>If you agreed on a deposit, you can change the amount before paying.</li>
+            </ul>
           </div>
         )}
 

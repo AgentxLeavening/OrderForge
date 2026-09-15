@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { normalizeVenmoUsername } from '@/lib/venmo'
+import { normalizePaypalMeName } from '@/lib/paypal'
 
 type ProviderId = 'etsy' | 'ebay' | 'shopify' | 'tiktok' | 'facebook'
 
@@ -44,6 +45,8 @@ export default function SettingsPage() {
   const [taxRate, setTaxRate] = useState('')
   const [venmoUsername, setVenmoUsername] = useState('')
   const [venmoError, setVenmoError] = useState('')
+  const [paypalName, setPaypalName] = useState('')
+  const [paypalError, setPaypalError] = useState('')
 
   const [connections, setConnections] = useState<Connection[]>([])
   const [connectionsLoading, setConnectionsLoading] = useState(true)
@@ -71,11 +74,12 @@ export default function SettingsPage() {
       if (!user) { setLoading(false); return }
       const { data } = await supabase
         .from('profiles')
-        .select('business_name, hourly_rate, default_markup, default_fee_pct, default_tax_rate, venmo_username')
+        .select('business_name, hourly_rate, default_markup, default_fee_pct, default_tax_rate, venmo_username, paypal_me_name')
         .eq('id', user.id)
         .single()
       if (data) {
         setVenmoUsername(data.venmo_username || '')
+        setPaypalName(data.paypal_me_name || '')
         setBusinessName(data.business_name || '')
         setHourlyRate(data.hourly_rate ?? '')
         setMarkup(data.default_markup ?? '')
@@ -128,12 +132,14 @@ export default function SettingsPage() {
     // Validate before saving anything, so a typo'd handle can't silently blank
     // the pay button on every quote.
     const venmo = normalizeVenmoUsername(venmoUsername)
-    if (venmoUsername.trim() && !venmo) {
-      setVenmoError('That doesn’t look like a Venmo username — letters, numbers, hyphens and underscores only.')
-      return
-    }
-    setVenmoError('')
+    const paypal = normalizePaypalMeName(paypalName)
+    const badVenmo = !!venmoUsername.trim() && !venmo
+    const badPaypal = !!paypalName.trim() && !paypal
+    setVenmoError(badVenmo ? 'That doesn’t look like a Venmo username — letters, numbers, hyphens and underscores only.' : '')
+    setPaypalError(badPaypal ? 'That doesn’t look like a PayPal.Me name — paste your paypal.me link or just the name after it.' : '')
+    if (badVenmo || badPaypal) return
     setVenmoUsername(venmo || '')
+    setPaypalName(paypal || '')
 
     setSaving(true)
     const { data: { user } } = await supabase.auth.getUser()
@@ -148,6 +154,7 @@ export default function SettingsPage() {
         default_fee_pct: num(feePct),
         default_tax_rate: num(taxRate),
         venmo_username: venmo,
+        paypal_me_name: paypal,
       })
       .eq('id', user.id)
     if (error) console.warn('Failed saving settings', error)
@@ -198,7 +205,7 @@ export default function SettingsPage() {
 
             <div>
               <h2 className="text-white font-semibold mb-1">Getting paid</h2>
-              <p className="text-gray-500 text-xs mb-4">Adds a “Pay with Venmo” button to quotes once a customer accepts, with the total and order reference filled in.</p>
+              <p className="text-gray-500 text-xs mb-4">Adds “Pay with Venmo” and “Pay with PayPal” buttons to quotes once a customer accepts, with the total filled in.</p>
               <label className={labelClass}>Venmo username</label>
               <div className="flex items-center">
                 <span className="bg-gray-800 border border-r-0 border-gray-700 rounded-l px-3 py-2 text-gray-500">@</span>
@@ -212,6 +219,20 @@ export default function SettingsPage() {
               {venmoError
                 ? <p className="text-red-400 text-xs mt-1">{venmoError}</p>
                 : <p className="text-gray-600 text-xs mt-1">Shown to customers on quotes. You can paste your Venmo profile link too. Leave blank to hide the button.</p>}
+
+              <label className={`${labelClass} mt-4`}>PayPal.Me name</label>
+              <div className="flex items-center">
+                <span className="bg-gray-800 border border-r-0 border-gray-700 rounded-l px-3 py-2 text-gray-500">paypal.me/</span>
+                <input
+                  value={paypalName}
+                  onChange={e => { setPaypalName(e.target.value); setPaypalError('') }}
+                  className={`${inputClass} rounded-l-none`}
+                  placeholder="YourName"
+                />
+              </div>
+              {paypalError
+                ? <p className="text-red-400 text-xs mt-1">{paypalError}</p>
+                : <p className="text-gray-600 text-xs mt-1">Your PayPal.Me link — find or create it at paypal.me. Leave blank to hide the button.</p>}
             </div>
 
             <div className="flex items-center gap-3">
