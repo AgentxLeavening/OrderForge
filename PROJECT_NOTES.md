@@ -418,9 +418,20 @@ Steps, in order:
      the production API. Disconnect and reconnect rather than debugging the
      sync path.
 7. **DONE**: `ebay` left in `VISIBLE_PROVIDERS` and committed.
-8. **TODO (cleanup)**: Regenerate the production Cert ID in the
-   portal and update it on Vercel — the original was pasted into a Claude
-   Code session transcript during setup.
+8. **DONE (2026-09-14)**: Production Cert ID rotated (it had been pasted
+   into a Claude Code transcript during setup). eBay's rotation takes a
+   **grace period** (0-4000 days) during which both cert IDs work, so there's
+   no downtime window — use a short one, since the point is retiring the
+   exposed value. Verified by a successful sync issuing a fresh access token.
+   Gotcha hit on the way: the new Cert ID went into `EBAY_CLIENT_ID` instead
+   of `EBAY_CLIENT_SECRET` — both production values start `PRD-`. The symptom
+   is `invalid_client` / "client authentication failed" (contrast
+   `invalid_grant`, which means the *token* is bad rather than the
+   credentials).
+   **Diagnostic worth reusing**: read `last_sync_error` straight off the
+   `marketplace_connections` row via the service-role key. It beats digging
+   through DevTools or function logs, and it's how this was solved after two
+   rounds of guessing.
 
 ### Gotchas hit during this rollout (2026-09-09)
 - **Vercel bakes env vars at build time.** Saving a variable does nothing to
@@ -487,6 +498,42 @@ Differences from eBay's equivalent that are easy to get wrong:
   seller-facing view of requests yet. Shopify allows 30 days, so this is
   inside the rules, but surface it in the UI when there's somewhere to put
   it.
+
+## Scheduled sync (2026-09-14)
+Orders now import on a schedule instead of waiting for a "Sync now" click —
+the gap the landing page copy already implied was closed ("new orders import
+themselves").
+
+**The trigger lives in GitHub Actions, not Vercel Cron.** On the Hobby plan
+Vercel cron fires at most once a day, which is too slow to be worth having.
+`.github/workflows/scheduled-sync.yml` runs every 30 minutes (plus
+`workflow_dispatch` for a manual run) and calls `app/api/cron/sync`. Moving to
+Vercel Pro later means swapping the trigger for a `vercel.json` cron entry
+against the same route; no app code changes.
+
+- **Auth is a shared secret** (`CRON_SECRET`) in an `Authorization: Bearer`
+  header, timing-safe compared. The route runs with no user session and syncs
+  *every* seller's connections, so without it anyone could make the app hammer
+  three marketplace APIs on demand. It **fails closed**: an unset
+  `CRON_SECRET` rejects everything rather than allowing everything.
+  The value must match in three places — `.env.local`, Vercel, and the repo
+  secret. Rotating means changing all three.
+- **One provider per invocation** (`?provider=`), with the workflow running
+  etsy/ebay/shopify as a `fail-fast: false` matrix. Vercel's published Hobby
+  function timeout is inconsistent across their own docs (10s / 60s / 300s
+  depending where you look), so this is built to sit inside the shortest of
+  them rather than betting on the longest.
+- **Per-connection failures are isolated** — one seller's dead token can't
+  stop everyone else's sync. The reason lands on that connection's
+  `last_sync_error`, which is the first place to look when one goes quiet.
+- **Only verified providers run** (`lib/integrations/registry.ts`). TikTok and
+  Facebook are scaffolding that has never been exercised against real
+  credentials, and an unattended job on a schedule must not be the first thing
+  to find that out. Same bar as `VISIBLE_PROVIDERS` in Settings.
+- The response deliberately omits user ids: anything holding the secret can
+  call it, and it doesn't need to hand back a roster of accounts.
+- Safe to run often because the sync is idempotent and skips unchanged orders;
+  a delayed or skipped GitHub run just means a later import.
 
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —
@@ -607,4 +654,5 @@ Design notes for whoever picks this up:
   production-only; local testing needs a tunnel.
 
 - TikTok Shop/Facebook: fully unverified, no credentials tested at all yet.
-- Marketplace sync is manual ("Sync now" button) — no scheduled/background sync yet.
+- ~~Marketplace sync is manual~~ — **scheduled sync added 2026-09-14**, see
+  below. The "Sync now" button stays as a manual override.

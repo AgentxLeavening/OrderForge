@@ -1,0 +1,63 @@
+name: Scheduled marketplace sync
+
+# Vercel's Hobby plan fires cron at most once a day, which is too slow for
+# "orders arrive on their own" to mean anything. GitHub Actions schedules are
+# free and run as often as every 5 minutes, so the trigger lives here and the
+# work stays in the app (app/api/cron/sync/route.ts).
+#
+# Requires two repository secrets:
+#   CRON_SECRET  — must match the CRON_SECRET env var on Vercel
+#   APP_URL      — e.g. https://orderforge-eight.vercel.app
+#
+# If you move to Vercel Pro, this can be replaced by a vercel.json cron entry
+# hitting the same route; the app-side code doesn't change.
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub queues scheduled runs and can delay them under
+    # load, so treat this as "roughly every half hour", not a guarantee — the
+    # sync is idempotent, so a late or skipped run only means a later import.
+    - cron: '*/30 * * * *'
+  # Lets you trigger a sync by hand from the Actions tab, which is handy for
+  # testing without waiting for the schedule.
+  workflow_dispatch:
+
+# Two runs overlapping would have both racing on the same connection rows for
+# no benefit, so a late run is skipped rather than queued behind an in-flight one.
+concurrency:
+  group: scheduled-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    strategy:
+      # One provider per job, matching the route's one-provider-per-invocation
+      # design — each request stays well inside even the shortest published
+      # Hobby function timeout.
+      matrix:
+        provider: [etsy, ebay, shopify]
+      # A provider being down must not stop the others from syncing.
+      fail-fast: false
+    steps:
+      - name: Sync ${{ matrix.provider }}
+        run: |
+          echo "Syncing ${{ matrix.provider }}…"
+          status=$(curl -sS -o response.json -w '%{http_code}' \
+            -X POST "${APP_URL}/api/cron/sync?provider=${{ matrix.provider }}" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            --max-time 120)
+
+          echo "HTTP $status"
+          # The body reports per-connection counts and any per-seller failure,
+          # so it's worth having in the run log.
+          cat response.json || true
+          echo
+
+          if [ "$status" != "200" ]; then
+            echo "::error::Sync request for ${{ matrix.provider }} returned HTTP $status"
+            exit 1
+          fi
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
