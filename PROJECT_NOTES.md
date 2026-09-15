@@ -653,7 +653,46 @@ e-signature, expiry emails, and a quote PDF — the link is the deliverable.
     worse than an accurate "Shipped", not least because Reports reads off
     these statuses.
 
-## Etsy webhooks — scoped, not built (2026-09-14)
+## Etsy webhooks — built (2026-09-15)
+`app/api/integrations/etsy/webhook/route.ts`, verification in
+`lib/integrations/etsyWebhooks.ts` (tests: `test/etsyWebhooks.test.ts`).
+Subscribe all four topics in Etsy's Webhook Portal to
+`https://orderforge-eight.vercel.app/api/integrations/etsy/webhook` and put
+the portal's signing secret (`whsec_...`) in Vercel as `ETSY_WEBHOOK_SECRET`.
+Unset secret = every delivery gets a 500 (fails closed, Etsy retries).
+
+Decisions made with the user, which change earlier rules in these notes:
+- **`order.delivered` moves the order to Complete.** Supersedes "no provider
+  ever emits complete". Still not a guess: Etsy derives delivery from carrier
+  tracking, so an order shipped *without* tracking never gets the event and
+  stays at Shipped. The receipt itself has no delivery field, so this arrives
+  as a `statusFloor` on `syncSingleOrder`; the forward-only `STATUS_RANK`
+  guard in `sync.ts` keeps later polls (which only see "shipped") from
+  dragging it back.
+- **A cancellation marks the order Cancelled and restocks inventory**, same as
+  cancelling by hand. Comes from both `order.canceled` and the receipt's
+  `status: canceled` on a normal poll (refunds deliberately do *not* count).
+  Uses `restock_inventory_for_order_admin` (migration 026, service-role only,
+  same reasoning as 024). The restock runs **before** the status write, so a
+  failed restock leaves the order un-cancelled and the next retry/poll tries
+  again — the other order would strand it as Cancelled with stock never
+  returned. An order imported already cancelled skips deduction entirely.
+
+How it's wired, per the design notes below: the payload is only ids; the
+receipt is re-fetched (`etsyProvider.fetchOrder`, built from our own API base
+rather than the payload's `resource_url`) and run through the shared
+`importOrders` path. The poll remains the backstop. `syncSingleOrder`
+deliberately doesn't touch `last_synced_at`/`last_sync_error`, which describe
+the poll. Any write failure returns 500 so Etsy retries (idempotent).
+
+Verification specifics: signed content is `id.timestamp.rawBody`, key is the
+base64 part after `whsec_`, 300s replay window. Etsy's docs don't show the
+header format, so both Standard Webhooks' `v1,<sig>` list and a bare base64
+value are accepted. **Not verified live yet** — confirm a real delivery
+succeeds (Vercel function logs show `[etsy] webhook handled`) before calling
+it done; a 401 there most likely means the header format guess is off.
+
+### Original scoping notes (2026-09-14)
 Etsy has a webhook system we weren't using; `lib/integrations/etsy.ts` polls
 receipts instead. Four topics exist:
 `order.paid`, `order.canceled`, `order.shipped`, `order.delivered`.

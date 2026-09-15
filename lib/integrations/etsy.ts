@@ -134,49 +134,75 @@ export const etsyProvider: MarketplaceProvider = {
       if (page.length < limit) break
     }
 
-    // Money fields confirmed live 2026-09-03 against a real receipt:
-    // subtotal + total_shipping_cost + total_tax_cost + total_vat_cost +
-    // gift_wrap_price − discount_amt = grandtotal, exactly.
-    const money = (m: any) => (m?.amount ?? 0) / (m?.divisor || 100)
-
-    return receipts.map((r): NormalizedOrder => {
-      const items: NormalizedOrder['items'] = (r.transactions || []).map((t: any) => ({
-        description: t.title || 'Etsy item',
-        quantity: Number(t.quantity) || 1,
-        unitPrice: money(t.price),
-        itemType: 'product' as const,
-      }))
-
-      // Etsy's own subtotal field — item revenue only, excludes shipping/tax.
-      const itemsSubtotal = money(r.subtotal)
-      // Rounded to cents — summing several already-divided money() values
-      // accumulates float noise otherwise (e.g. 6.640000000000001).
-      const shippingAndTax = Math.round(
-        (money(r.total_shipping_cost) + money(r.total_tax_cost) + money(r.total_vat_cost) + money(r.gift_wrap_price) - money(r.discount_amt)) * 100
-      ) / 100
-      if (shippingAndTax > 0.005) {
-        items.push({ description: 'Shipping & tax', quantity: 1, unitPrice: shippingAndTax, itemType: 'shipping', buyerCovered: true })
-      }
-
-      // Etsy returns a `shipments` array on the receipt (carrier_name +
-      // tracking_code per shipment). It is frequently empty even for a
-      // shipped order — a seller can mark shipped without entering tracking —
-      // so treat a miss as "no tracking", not an error. Multi-package orders
-      // take the first tracked shipment; orders.tracking_number holds one.
-      const trackingNumber =
-        ((r.shipments || []) as any[]).map(s => s?.tracking_code).find(t => typeof t === 'string' && t.trim()) || null
-
-      return {
-        externalOrderId: String(r.receipt_id),
-        buyerName: r.name || null,
-        status: r.is_shipped ? 'shipped' : 'in_progress',
-        trackingNumber,
-        itemsSubtotal,
-        shippingAndTax,
-        buyerCoversShipping: true,
-        createdAt: new Date((r.created_timestamp || Date.now() / 1000) * 1000).toISOString(),
-        items,
-      }
-    })
+    return receipts.map(normalizeReceipt)
   },
+
+  // One receipt, for the webhook path (app/api/integrations/etsy/webhook).
+  // Built from our own API_BASE and ids rather than fetching the payload's
+  // resource_url as-is, so a notification can only ever cause a request to
+  // Etsy's API, never to an arbitrary URL.
+  async fetchOrder({ accessToken, shopId, externalOrderId }) {
+    const res = await fetch(`${API_BASE}/shops/${shopId}/receipts/${encodeURIComponent(externalOrderId)}`, {
+      headers: { Authorization: `Bearer ${accessToken}`, 'x-api-key': apiKeyHeader() },
+    })
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error(`Etsy receipt fetch failed: ${res.status} ${await res.text()}`)
+    return normalizeReceipt(await res.json())
+  },
+}
+
+// Money fields confirmed live 2026-09-03 against a real receipt:
+// subtotal + total_shipping_cost + total_tax_cost + total_vat_cost +
+// gift_wrap_price − discount_amt = grandtotal, exactly.
+const money = (m: any) => (m?.amount ?? 0) / (m?.divisor || 100)
+
+export function normalizeReceipt(r: any): NormalizedOrder {
+  const items: NormalizedOrder['items'] = (r.transactions || []).map((t: any) => ({
+    description: t.title || 'Etsy item',
+    quantity: Number(t.quantity) || 1,
+    unitPrice: money(t.price),
+    itemType: 'product' as const,
+  }))
+
+  // Etsy's own subtotal field — item revenue only, excludes shipping/tax.
+  const itemsSubtotal = money(r.subtotal)
+  // Rounded to cents — summing several already-divided money() values
+  // accumulates float noise otherwise (e.g. 6.640000000000001).
+  const shippingAndTax = Math.round(
+    (money(r.total_shipping_cost) + money(r.total_tax_cost) + money(r.total_vat_cost) + money(r.gift_wrap_price) - money(r.discount_amt)) * 100
+  ) / 100
+  if (shippingAndTax > 0.005) {
+    items.push({ description: 'Shipping & tax', quantity: 1, unitPrice: shippingAndTax, itemType: 'shipping', buyerCovered: true })
+  }
+
+  // Etsy returns a `shipments` array on the receipt (carrier_name +
+  // tracking_code per shipment). It is frequently empty even for a
+  // shipped order — a seller can mark shipped without entering tracking —
+  // so treat a miss as "no tracking", not an error. Multi-package orders
+  // take the first tracked shipment; orders.tracking_number holds one.
+  const trackingNumber =
+    ((r.shipments || []) as any[]).map(s => s?.tracking_code).find(t => typeof t === 'string' && t.trim()) || null
+
+  return {
+    externalOrderId: String(r.receipt_id),
+    buyerName: r.name || null,
+    status: receiptStatus(r),
+    trackingNumber,
+    itemsSubtotal,
+    shippingAndTax,
+    buyerCoversShipping: true,
+    createdAt: new Date((r.created_timestamp || Date.now() / 1000) * 1000).toISOString(),
+    items,
+  }
+}
+
+// Etsy's receipt `status` is one of: paid, completed, open, payment processing,
+// canceled, fully refunded, partially refunded. Only an explicit cancellation
+// maps to 'cancelled' — a refund isn't necessarily a cancelled order (the item
+// may have shipped and been refunded after), so those stay on the shipped flag.
+// The receipt has no delivery field; 'complete' comes only from the
+// order.delivered webhook (see syncSingleOrder's statusFloor).
+function receiptStatus(r: any): NormalizedOrder['status'] {
+  if (String(r.status || '').toLowerCase() === 'canceled') return 'cancelled'
+  return r.is_shipped ? 'shipped' : 'in_progress'
 }
