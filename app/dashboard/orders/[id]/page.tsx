@@ -404,10 +404,16 @@ const handleGenerateInvoice = async () => {
   })
   setPaymentsRefreshKey(k => k + 1)
 
-  // Generating an invoice functions as sending the seller's price to the
-  // buyer, so auto-advance the order to Quoted.
-  await supabase.from('orders').update({ status: 'quoted' }).eq('id', id)
-  setStatus('quoted')
+  // An invoice is a bill, and billing normally happens at the END of a job —
+  // so it must not move the order's status about. The one exception is an
+  // untouched Inquiry, where sending a priced document is the same signal the
+  // quote button gives: it becomes Quoted. Anything further along is left
+  // exactly where it is. (Before quotes existed this always forced 'quoted',
+  // which is why invoicing finished work used to be impossible.)
+  if (status === 'inquiry') {
+    await supabase.from('orders').update({ status: 'quoted' }).eq('id', id)
+    setStatus('quoted')
+  }
 
   // Generate PDF
   const pdfBytes = await generateInvoicePdf({
@@ -776,10 +782,10 @@ const handleGenerateInvoice = async () => {
           />
         )}
 
-              {/* Invoice Button — generating one auto-advances status to
-                  Quoted, so only allow it while the order is still at an
-                  early stage; otherwise it would keep dragging a
-                  further-along order's status backward. */}
+              {/* Invoice Button — available at any stage except Cancelled,
+                  since billing usually happens once the work is done. It no
+                  longer moves the status (except an untouched Inquiry, see
+                  handleGenerateInvoice), so it can't drag an order backward. */}
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex items-center gap-3">
             <button
@@ -791,7 +797,7 @@ const handleGenerateInvoice = async () => {
             </button>
             <button
               onClick={handleGenerateInvoice}
-              disabled={!['inquiry', 'quoted'].includes(status)}
+              disabled={status === 'cancelled' || lineItems.length === 0}
               className="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-3 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-600"
             >
               Generate Invoice →
@@ -834,8 +840,8 @@ const handleGenerateInvoice = async () => {
               {' '}so customers can pay straight from the quote.
             </p>
           )}
-          {!['inquiry', 'quoted'].includes(status) && (
-            <p className="text-gray-600 text-xs">Invoice only available while the order is Inquiry or Quoted.</p>
+          {status === 'cancelled' && (
+            <p className="text-gray-600 text-xs">Cancelled orders can&apos;t be invoiced.</p>
           )}
         </div>
       </main>
