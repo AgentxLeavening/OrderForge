@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { normalizeVenmoUsername } from '@/lib/venmo'
 import { normalizePaypalMeName } from '@/lib/paypal'
+import StripeConnection from '@/app/components/StripeConnection'
 
 type ProviderId = 'etsy' | 'ebay' | 'shopify' | 'tiktok' | 'facebook'
 
@@ -53,6 +54,7 @@ export default function SettingsPage() {
   const [syncingProvider, setSyncingProvider] = useState<string | null>(null)
   const [connectNotice, setConnectNotice] = useState<{ provider: string; status: string } | null>(null)
   const [shopifyDomain, setShopifyDomain] = useState('')
+  const [stripeNotice, setStripeNotice] = useState<string | null>(null)
 
   const loadConnections = async () => {
     setConnectionsLoading(true)
@@ -93,6 +95,12 @@ export default function SettingsPage() {
 
     // Marketplace OAuth redirects back here with ?etsy=connected or ?ebay=error etc.
     const params = new URLSearchParams(window.location.search)
+    // Stripe onboarding returns with ?stripe=connected|pending|expired|error
+    const stripeParam = params.get('stripe')
+    if (stripeParam) {
+      setStripeNotice(stripeParam)
+      window.history.replaceState(null, '', '/dashboard/settings')
+    }
     for (const provider of ALL_PROVIDERS) {
       const status = params.get(provider)
       if (status) {
@@ -242,6 +250,8 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+
+        <StripeConnection notice={stripeNotice} />
 
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mt-6">
           <h2 className="text-white font-semibold mb-1">Marketplace connections</h2>

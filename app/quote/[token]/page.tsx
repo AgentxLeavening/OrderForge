@@ -5,6 +5,7 @@ import { isExpired, canRespond, type QuoteSnapshot, type QuoteStatus } from '@/l
 import { normalizeVenmoUsername, venmoPayUrl } from '@/lib/venmo'
 import { normalizePaypalMeName, paypalPayUrl } from '@/lib/paypal'
 import QuoteResponse from './QuoteResponse'
+import PayByCard from './PayByCard'
 
 export const metadata: Metadata = {
   title: 'Your quote',
@@ -40,6 +41,16 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
     .select('venmo_username, paypal_me_name')
     .eq('id', quote.user_id)
     .maybeSingle()
+
+  // Card payments only appear once Stripe says the seller can actually be
+  // charged — an account exists from the moment onboarding starts, but Stripe
+  // withholds charging until identity and bank details clear.
+  const { data: stripeAccount } = await admin
+    .from('stripe_accounts')
+    .select('charges_enabled')
+    .eq('user_id', quote.user_id)
+    .maybeSingle()
+  const cardEnabled = !!stripeAccount?.charges_enabled
 
   // First open marks it seen, so the seller can tell "not looked at yet" from
   // "read and ignored" — the question a quote actually raises.
@@ -172,7 +183,7 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
             would be backwards. Handles, amount and reference are also shown
             as text: Venmo's prefilled links aren't officially documented, and
             PayPal.Me can't prefill a note, so the customer may need them. */}
-        {status === 'accepted' && (venmo || paypal) && payNow > 0 && (
+        {status === 'accepted' && (venmo || paypal || cardEnabled) && payNow > 0 && (
           <div className="mt-6 bg-gray-900 border border-gray-800 rounded-2xl p-5">
             <p className="text-white font-semibold">{deposit ? 'Pay your deposit' : 'Ready to pay?'}</p>
             <p className="text-gray-400 text-sm mt-1">
@@ -182,6 +193,9 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
               {' '}Please include reference <span className="text-gray-200 font-medium">{snapshot.orderNumber}</span> with your payment.
             </p>
             <div className="flex flex-wrap gap-3 mt-4">
+              {cardEnabled && (
+                <PayByCard token={quote.token} label={`Pay ${money(payNow)} by card`} />
+              )}
               {venmo && (
                 <a
                   href={venmoPayUrl(venmo, payNow, `${deposit ? 'Deposit — ' : ''}${snapshot.orderTitle} (${snapshot.orderNumber})`)}

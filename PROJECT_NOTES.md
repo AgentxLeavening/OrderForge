@@ -669,7 +669,40 @@ page) plus a "💵 owed to you" banner and "Owes $X" on board cards.
   is a documented PayPal.Me feature (sturdier than Venmo's), but PayPal.Me
   **cannot prefill a note**, so the page asks the customer to add the order
   reference by hand. Both buttons share one "Ready to pay?" panel.
-- Next: Stripe (card payments from the quote link), discussed but not started.
+## Stripe Connect — card payments (2026-09-16)
+The only payment method that confirms itself: a completed checkout writes the
+`order_payments` row via webhook, so nobody has to remember. Built in **test
+mode first** at the user's direction; live mode needs the platform setup below.
+
+- **Connect Onboarding (Standard accounts), not OAuth** — Stripe's own docs now
+  say OAuth "isn't recommended for new Connect platforms". Each seller links
+  their OWN account (`stripe_accounts`, migration 034): money goes straight to
+  them, OrderForge holds nothing and charges no application fee.
+- **No per-seller secrets.** Standard + Connect Onboarding authenticates with
+  the platform key plus a `Stripe-Account` header, so the only thing stored is
+  the account id — nothing to leak, unlike the marketplace OAuth tokens.
+- **`charges_enabled` is the gate, never account existence.** An account exists
+  the moment onboarding starts, but Stripe withholds charging until identity
+  and bank checks clear; showing a pay button before then hands the customer a
+  broken checkout. Settings shows three honest states (not connected /
+  finishing setup / connected).
+- **Amounts are derived server-side from the quote snapshot** (deposit if there
+  is one, else the total) — the browser passes a token, never a price, same
+  discipline as quote creation.
+- **Webhook** (`/api/stripe/webhook`) verifies with Stripe's own
+  `constructEvent` (HMAC over the raw body + timestamp) — the fourth distinct
+  verification scheme here, after eBay's ECDSA, Shopify's HMAC header and
+  Etsy's Standard Webhooks. Must be registered as a **Connect** webhook or
+  connected-account events never fire. Recording is idempotent on the checkout
+  session id, and failures return non-2xx so Stripe retries (an unrecorded
+  payment is worse than a duplicate delivery). Also handles `account.updated`
+  (keeps the pay button honest) and `account.application.deauthorized`.
+- `livemode` is derived from the key prefix (`sk_test_`), not the Account
+  object — Stripe's types don't expose it there, and a test key can only ever
+  produce test accounts.
+- **Env needed**: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`. Without them the
+  routes return 503 and the UI says card payments aren't set up — nothing
+  breaks for sellers who don't use Stripe.
 
 ## Estimated vs actual time (2026-09-15)
 Second of the four Craftybase differentiators. For commission work labour is
