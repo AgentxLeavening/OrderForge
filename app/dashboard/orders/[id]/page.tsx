@@ -114,6 +114,14 @@ export default function OrderDetailPage() {
   const [notes, setNotes] = useState('')
   const [sendingQuote, setSendingQuote] = useState(false)
   const [quoteLink, setQuoteLink] = useState('')
+  // Quote terms. Deposit defaults to 50% — the usual commission arrangement —
+  // but nothing is asked for unless the seller opens these options and the
+  // percentage is set, so a plain quote stays one click.
+  const [quoteOptionsOpen, setQuoteOptionsOpen] = useState(false)
+  const [depositPct, setDepositPct] = useState('50')
+  const [depositEnabled, setDepositEnabled] = useState(false)
+  const [quoteMessage, setQuoteMessage] = useState('')
+  const [quoteValidUntil, setQuoteValidUntil] = useState('')
   const [estimatedShipping, setEstimatedShipping] = useState('')
   const [shippingBuyerCovered, setShippingBuyerCovered] = useState(true)
   const [trackingNumber, setTrackingNumber] = useState('')
@@ -347,7 +355,14 @@ export default function OrderDetailPage() {
       const res = await fetch('/api/quotes/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: id }),
+        body: JSON.stringify({
+          orderId: id,
+          message: quoteMessage.trim() || undefined,
+          validUntil: quoteValidUntil || undefined,
+          deposit: depositEnabled && Number(depositPct) > 0
+            ? { type: 'percent', value: Number(depositPct) }
+            : { type: 'none' },
+        }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json.error || 'Could not create the quote.')
@@ -786,8 +801,73 @@ const handleGenerateInvoice = async () => {
                   since billing usually happens once the work is done. It no
                   longer moves the status (except an untouched Inquiry, see
                   handleGenerateInvoice), so it can't drag an order backward. */}
+        {quoteOptionsOpen && (
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-4">
+            <h2 className="text-white font-semibold mb-4">Quote terms</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={depositEnabled}
+                    onChange={e => setDepositEnabled(e.target.checked)}
+                    className="accent-indigo-500"
+                  />
+                  Ask for a deposit to book
+                </label>
+                <div className="flex items-center gap-2 mt-2">
+                  <input
+                    value={depositPct}
+                    onChange={e => setDepositPct(e.target.value)}
+                    disabled={!depositEnabled}
+                    type="number"
+                    min="1"
+                    max="100"
+                    className="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+                  />
+                  <span className="text-gray-400 text-sm">
+                    % of {`$${total.toFixed(2)}`}
+                    {depositEnabled && Number(depositPct) > 0 && (
+                      <span className="text-white"> = ${(Math.round(total * (Number(depositPct) / 100) * 100) / 100).toFixed(2)}</span>
+                    )}
+                  </span>
+                </div>
+                <p className="text-gray-600 text-xs mt-1">Tax is added on the quote, so the deposit is a share of the final total.</p>
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-400 mb-1 block">Quote valid until <span className="text-gray-600">(optional)</span></label>
+                <input
+                  type="date"
+                  value={quoteValidUntil}
+                  onChange={e => setQuoteValidUntil(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500"
+                />
+                <p className="text-gray-600 text-xs mt-1">After this date the customer can read the quote but not accept it.</p>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="text-sm text-gray-400 mb-1 block">Message to the customer <span className="text-gray-600">(optional)</span></label>
+              <textarea
+                value={quoteMessage}
+                onChange={e => setQuoteMessage(e.target.value)}
+                rows={3}
+                placeholder="What's included, lead time, deposit terms…"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+              />
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setQuoteOptionsOpen(o => !o)}
+              className="text-sm text-gray-400 hover:text-white px-3 py-3"
+            >
+              {quoteOptionsOpen ? 'Hide quote terms' : 'Quote terms…'}
+            </button>
             <button
               onClick={handleSendQuote}
               disabled={sendingQuote || lineItems.length === 0}

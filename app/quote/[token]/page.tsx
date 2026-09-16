@@ -59,6 +59,11 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
   // Re-validated at render: never put an unchecked value into a link.
   const venmo = normalizeVenmoUsername(seller?.venmo_username)
   const paypal = normalizePaypalMeName(seller?.paypal_me_name)
+  // Deposits are the usual commission arrangement: pay part up front to book
+  // the slot. When one was asked for, the pay buttons offer it rather than the
+  // full total — that's the amount the customer agreed to pay now.
+  const deposit = snapshot.deposit?.amount && snapshot.deposit.amount > 0 ? snapshot.deposit.amount : null
+  const payNow = deposit ?? snapshot.total
 
   const money = (n: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(n) || 0)
@@ -144,6 +149,14 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
               <span>Total</span>
               <span className="tabular-nums">{money(snapshot.total)}</span>
             </div>
+            {deposit && (
+              <div className="flex justify-between text-indigo-300 pt-2 border-t border-gray-800">
+                <span>
+                  Deposit to book{snapshot.deposit?.percent ? ` (${snapshot.deposit.percent}%)` : ''}
+                </span>
+                <span className="tabular-nums font-medium">{money(deposit)}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -159,32 +172,34 @@ export default async function QuotePage({ params }: { params: Promise<{ token: s
             would be backwards. Handles, amount and reference are also shown
             as text: Venmo's prefilled links aren't officially documented, and
             PayPal.Me can't prefill a note, so the customer may need them. */}
-        {status === 'accepted' && (venmo || paypal) && snapshot.total > 0 && (
+        {status === 'accepted' && (venmo || paypal) && payNow > 0 && (
           <div className="mt-6 bg-gray-900 border border-gray-800 rounded-2xl p-5">
-            <p className="text-white font-semibold">Ready to pay?</p>
+            <p className="text-white font-semibold">{deposit ? 'Pay your deposit' : 'Ready to pay?'}</p>
             <p className="text-gray-400 text-sm mt-1">
-              {snapshot.businessName} takes {[venmo && 'Venmo', paypal && 'PayPal'].filter(Boolean).join(' and ')}.
+              {deposit
+                ? `${snapshot.businessName} asks for ${money(deposit)} up front to book this work. The rest (${money(snapshot.total - deposit)}) is due later.`
+                : `${snapshot.businessName} takes ${[venmo && 'Venmo', paypal && 'PayPal'].filter(Boolean).join(' and ')}.`}
               {' '}Please include reference <span className="text-gray-200 font-medium">{snapshot.orderNumber}</span> with your payment.
             </p>
             <div className="flex flex-wrap gap-3 mt-4">
               {venmo && (
                 <a
-                  href={venmoPayUrl(venmo, snapshot.total, `${snapshot.orderTitle} (${snapshot.orderNumber})`)}
+                  href={venmoPayUrl(venmo, payNow, `${deposit ? 'Deposit — ' : ''}${snapshot.orderTitle} (${snapshot.orderNumber})`)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 bg-[#008CFF] hover:bg-[#0074d4] text-white font-semibold px-5 py-2.5 rounded-xl transition"
                 >
-                  Pay {money(snapshot.total)} with Venmo
+                  Pay {money(payNow)} with Venmo
                 </a>
               )}
               {paypal && (
                 <a
-                  href={paypalPayUrl(paypal, snapshot.total)}
+                  href={paypalPayUrl(paypal, payNow)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 bg-[#FFC439] hover:bg-[#f2b72c] text-[#003087] font-semibold px-5 py-2.5 rounded-xl transition"
                 >
-                  Pay {money(snapshot.total)} with PayPal
+                  Pay {money(payNow)} with PayPal
                 </a>
               )}
             </div>

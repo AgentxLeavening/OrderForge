@@ -599,8 +599,21 @@ Decline -> acceptance moves the order Quoted -> In Progress on its own.
 - Responses are final and one-shot: a second click gets 409, an unknown token
   gets 404, an expired quote can be read but not answered.
 
-**Deliberately not in this version**: payments/deposits (Stripe is its own
-project, and deposits are the most likely genuine gap for commission work),
+### Deposits (2026-09-15)
+"50% to book" — the standard commission term, and the first of four
+differentiators chosen against Craftybase (which is a ledger: no quotes, no
+deposits, no order pipeline). Seller opens **Quote terms…** on the order page
+to set a deposit %, an expiry date and a message (the create route already
+accepted the latter two; nothing sent them until now). `computeDeposit` in
+`lib/quotes.ts` derives the amount **server-side** from the quote total, is
+clamped to that total, and lands in `quotes.deposit_amount` (migration 030)
+**and** in the snapshot, since it's part of the terms as sent. The public
+quote page shows it as a line under Total, and once accepted the pay buttons
+ask for the deposit rather than the full amount, with the remainder stated.
+A quote with no deposit behaves exactly as before.
+
+**Deliberately not in this version**: card payments (Stripe is its own
+project),
 e-signature, expiry emails, and a quote PDF — the link is the deliverable.
 
 ## Payment tracking (2026-09-15)
