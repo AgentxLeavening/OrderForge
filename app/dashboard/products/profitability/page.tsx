@@ -142,11 +142,11 @@ export default function ProfitabilityPage() {
 
                 <div className="space-y-1.5">
                   {product.channels.map(c => (
-                    <div key={c.channel} className="grid grid-cols-12 gap-2 items-center bg-gray-800 rounded-lg px-3 py-2 text-sm">
-                      <div className="col-span-4 text-gray-200">{c.channel}</div>
-                      <div className="col-span-2 text-gray-500 text-xs">{c.orders} order{c.orders === 1 ? '' : 's'}</div>
-                      <div className="col-span-3 text-right text-gray-400">${c.revenue.toFixed(2)} rev</div>
-                      <div className={`col-span-3 text-right font-medium ${c.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    <div key={c.channel} className="flex flex-wrap items-center gap-x-3 gap-y-1 sm:grid sm:grid-cols-12 sm:gap-2 bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                      <div className="sm:col-span-4 text-gray-200">{c.channel}</div>
+                      <div className="sm:col-span-2 text-gray-500 text-xs">{c.orders} order{c.orders === 1 ? '' : 's'}</div>
+                      <div className="sm:col-span-3 sm:text-right text-gray-400">${c.revenue.toFixed(2)} rev</div>
+                      <div className={`sm:col-span-3 text-right font-medium ml-auto sm:ml-0 ${c.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         ${c.profit.toFixed(2)} ({marginOf(c.revenue, c.profit).toFixed(0)}%)
                       </div>
                     </div>

@@ -57,7 +57,7 @@ export default function InventoryTransactionsPage() {
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
-          <div className="grid grid-cols-12 gap-2 text-gray-400 text-xs uppercase tracking-wide px-2 mb-2">
+          <div className="hidden md:grid grid-cols-12 gap-2 text-gray-400 text-xs uppercase tracking-wide px-2 mb-2">
             <div className="col-span-2">When</div>
             <div className="col-span-3">Item</div>
             <div className="col-span-2 text-center">Change</div>
@@ -68,16 +68,18 @@ export default function InventoryTransactionsPage() {
 
           <div className="space-y-2">
             {loading ? <p className="text-gray-400 px-2">Loading…</p> : txs.length === 0 ? <p className="text-gray-400 px-2">No transactions yet.</p> : txs.map(tx => (
-              <div key={tx.id} className="grid grid-cols-12 gap-2 items-center bg-gray-800 rounded-lg px-4 py-3">
-                <div className="col-span-2 text-gray-300">{new Date(tx.created_at).toLocaleString()}</div>
-                <div className="col-span-3 text-white">{tx.inventory_items?.name || tx.metadata?.name || 'Unknown' } <span className="text-gray-400">{(tx.inventory_items?.sku || tx.metadata?.sku) ? `(${tx.inventory_items?.sku || tx.metadata?.sku})` : ''}</span></div>
-                <div className={`col-span-2 text-center ${tx.change < 0 ? 'text-red-400' : 'text-green-400'}`}>{tx.change > 0 ? `+${tx.change}` : tx.change}</div>
-                <div className="col-span-2 text-center text-white">{tx.previous_quantity ?? '—'} → {tx.new_quantity ?? '—'}</div>
-                <div className="col-span-2 text-gray-300">{tx.reason || tx.metadata?.reason || '—'}</div>
-                <div className="col-span-1 text-right">
-                  {tx.orders?.id ? (
-                    <Link href={`/dashboard/orders/${tx.orders.id}`} className="text-indigo-400 hover:underline">Order</Link>
-                  ) : null}
+              <div key={tx.id} className="bg-gray-800 rounded-lg px-4 py-3 text-sm flex flex-col gap-1.5 md:grid md:grid-cols-12 md:gap-2 md:items-center">
+                <div className="md:col-span-2 text-gray-300 order-2 md:order-none text-xs md:text-sm">{new Date(tx.created_at).toLocaleString()}</div>
+                <div className="md:col-span-3 text-white order-1 md:order-none">{tx.inventory_items?.name || tx.metadata?.name || 'Unknown' } <span className="text-gray-400">{(tx.inventory_items?.sku || tx.metadata?.sku) ? `(${tx.inventory_items?.sku || tx.metadata?.sku})` : ''}</span></div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 order-3 md:contents">
+                  <div className={`md:col-span-2 md:text-center ${tx.change < 0 ? 'text-red-400' : 'text-green-400'}`}>{tx.change > 0 ? `+${tx.change}` : tx.change}</div>
+                  <div className="md:col-span-2 md:text-center text-white">{tx.previous_quantity ?? '—'} → {tx.new_quantity ?? '—'}</div>
+                  <div className="md:col-span-2 text-gray-300 text-xs md:text-sm">{tx.reason || tx.metadata?.reason || '—'}</div>
+                  <div className="md:col-span-1 md:text-right ml-auto md:ml-0">
+                    {tx.orders?.id ? (
+                      <Link href={`/dashboard/orders/${tx.orders.id}`} className="text-indigo-400 hover:underline">Order</Link>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             ))}
