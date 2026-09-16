@@ -689,6 +689,12 @@ on the order page.
   `labor_cost ÷ hourly_rate` later — the rate changes, and an order should be
   judged against the hours it was actually priced for. Editable on the order,
   and editing it deliberately does **not** re-price the order.
+- **The card hides itself when the work isn't priced by the hour** (2026-09-15,
+  user's call): no estimate (the product template's `est_time` is 0/null, or
+  the order was never templated) *and* no time logged yet collapses it to a
+  "+ Track time on this order" link. Card lots and resale one-offs don't want a
+  timer. An order with any time already logged always renders in full, so
+  tracked work can't vanish behind the collapse.
 - **"Earning per hour" = (revenue − materials − shipping − fees) ÷ actual
   hours**, NOT profit ÷ hours: profit already has estimated labour subtracted,
   so dividing it by hours charges the same work twice. Compared against the

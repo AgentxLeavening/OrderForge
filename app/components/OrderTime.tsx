@@ -45,6 +45,9 @@ export default function OrderTime({
   const [now, setNow] = useState(() => Date.now())
 
   const [estimateInput, setEstimateInput] = useState(estimatedHours == null ? '' : String(estimatedHours))
+  // Revealed by hand on an order that has no estimate — see the collapsed
+  // state below.
+  const [revealed, setRevealed] = useState(false)
   const [manualHours, setManualHours] = useState('')
   const [manualDate, setManualDate] = useState(todayLocal())
   const [manualNote, setManualNote] = useState('')
@@ -135,6 +138,26 @@ export default function OrderTime({
   }
 
   const inputClass = 'bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500'
+
+  // Plenty of work isn't priced by the hour at all — a card lot, a resale
+  // one-off, anything whose product template has no est_time. A timer on those
+  // is clutter, so the card collapses to a single link until it's wanted.
+  // Any order with time already logged always shows in full, so tracked work
+  // can never quietly disappear.
+  const hasEstimate = estimatedHours != null && estimatedHours > 0
+  if (!loading && !hasEstimate && entries.length === 0 && !revealed) {
+    return (
+      <div className="mb-6">
+        <button
+          type="button"
+          onClick={() => setRevealed(true)}
+          className="text-sm text-gray-500 hover:text-indigo-300 transition"
+        >
+          + Track time on this order
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
