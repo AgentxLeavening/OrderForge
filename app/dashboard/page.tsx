@@ -9,6 +9,7 @@ import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea
 import { isLowStock, unitShort } from '@/lib/inventory'
 import { computeOrderEconomics } from '@/lib/pricing'
 import { amountDue, isOwed, summarizePayments, type BillableLine, type PaymentRecord } from '@/lib/payments'
+import { daysUntilDue, dueLabel, groupByDue } from '@/lib/schedule'
 import Link from 'next/link'
 
 type OwedOrder = {
@@ -418,7 +419,10 @@ export default function DashboardPage() {
       .sort((a, b) => b.profit - a.profit || b.count - a.count)
   })()
 
-  const isOverdue = (due: string | null) => due && new Date(due) < new Date()
+  // Kept in step with lib/schedule.ts: a "YYYY-MM-DD" date column parsed by
+  // `new Date()` is UTC midnight, which reads as yesterday in the Americas —
+  // an order due today would show as overdue.
+  const isOverdue = (due: string | null) => !!due && (daysUntilDue(due) ?? 0) < 0
 
   // Widget render helpers
   const renderStats = () => (
@@ -963,6 +967,37 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
+
+        {/* Due soon — late work first, then today, then the next seven days.
+            Finished and cancelled orders never appear (see groupByDue). */}
+        {(() => {
+          const groups = groupByDue(orders)
+          const soon = [...groups.overdue, ...groups.today, ...groups.this_week]
+          if (soon.length === 0) return null
+          return (
+            <div className="mb-8 bg-gray-900 border border-gray-800 rounded-2xl p-4">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <p className="text-white font-semibold">
+                  🗓️ Due soon · {soon.length} {soon.length === 1 ? 'order' : 'orders'}
+                  {groups.overdue.length > 0 && (
+                    <span className="text-red-400 font-normal"> · {groups.overdue.length} late</span>
+                  )}
+                </p>
+                <Link href="/dashboard/schedule" className="text-indigo-400 hover:text-indigo-300 text-sm font-medium whitespace-nowrap">
+                  Schedule →
+                </Link>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-sm">
+                {soon.slice(0, 5).map(o => (
+                  <Link key={o.id} href={`/dashboard/orders/${o.id}`} className="text-gray-400 hover:text-white">
+                    {o.title} — <span className={groups.overdue.some(x => x.id === o.id) ? 'text-red-400' : 'text-gray-500'}>{dueLabel(o.due_date)}</span>
+                  </Link>
+                ))}
+                {soon.length > 5 && <span className="text-gray-600">+{soon.length - 5} more</span>}
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Money owed — orders with an unpaid balance (see isOwed in lib/payments.ts) */}
         {owedOrders.length > 0 && (
