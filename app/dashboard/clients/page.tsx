@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { amountDue, isOwed, summarizePayments, type BillableLine, type PaymentRecord } from '@/lib/payments'
 
 type Client = {
   id: string
@@ -27,6 +28,7 @@ const PLATFORM_LABELS: Record<string, string> = {
 export default function ClientsPage() {
   const router = useRouter()
   const [clients, setClients] = useState<Client[]>([])
+  const [owedByClient, setOwedByClient] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [userId, setUserId] = useState('')
@@ -48,6 +50,47 @@ export default function ClientsPage() {
       .eq('user_id', uid)
       .order('name', { ascending: true })
     setClients(data || [])
+
+    // Outstanding balance per client, by the same rules as the order page and
+    // the client page (lib/payments.ts). Loaded after the list renders — a
+    // balance is useful, but nobody should wait on it to see their clients.
+    const { data: orders } = await supabase
+      .from('orders')
+      .select('id, client_id, status, external_source')
+      .eq('user_id', uid)
+      .not('client_id', 'is', null)
+
+    const orderList = (orders || []) as { id: string; client_id: string; status: string; external_source: string | null }[]
+    const orderIds = orderList.map(o => o.id)
+    if (orderIds.length === 0) { setOwedByClient({}); return }
+
+    const [items, invoices, quotes, payments] = await Promise.all([
+      supabase.from('order_items').select('order_id, quantity, unit_price, item_type, buyer_covered').in('order_id', orderIds),
+      supabase.from('invoices').select('order_id, total, created_at').in('order_id', orderIds).order('created_at', { ascending: true }),
+      supabase.from('quotes').select('order_id, snapshot, responded_at').eq('status', 'accepted').in('order_id', orderIds).order('responded_at', { ascending: true }),
+      supabase.from('order_payments').select('order_id, amount, kind').in('order_id', orderIds),
+    ])
+
+    const itemsBy: Record<string, BillableLine[]> = {}
+    ;(items.data || []).forEach(it => { (itemsBy[it.order_id] ||= []).push(it) })
+    const invoiceTotal: Record<string, number | null> = {}
+    ;(invoices.data || []).forEach(inv => { invoiceTotal[inv.order_id] = inv.total })
+    const quoteTotal: Record<string, number | null> = {}
+    ;(quotes.data || []).forEach(q => { quoteTotal[q.order_id] = (q.snapshot as { total?: number } | null)?.total ?? null })
+    const paymentsBy: Record<string, PaymentRecord[]> = {}
+    ;(payments.data || []).forEach(p => { (paymentsBy[p.order_id] ||= []).push(p) })
+
+    const owed: Record<string, number> = {}
+    for (const o of orderList) {
+      const due = amountDue({
+        lineItems: itemsBy[o.id] || [],
+        latestInvoiceTotal: invoiceTotal[o.id],
+        acceptedQuoteTotal: quoteTotal[o.id],
+      })
+      const summary = summarizePayments({ due: due.amount, payments: paymentsBy[o.id] || [], isMarketplace: !!o.external_source })
+      if (isOwed(summary, o.status)) owed[o.client_id] = (owed[o.client_id] || 0) + summary.balance
+    }
+    setOwedByClient(owed)
   }, [])
 
   useEffect(() => {
@@ -162,6 +205,11 @@ export default function ClientsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
+                    {owedByClient[client.id] > 0 && (
+                      <span className="text-emerald-400 text-sm whitespace-nowrap">
+                        Owes ${owedByClient[client.id].toFixed(2)}
+                      </span>
+                    )}
                     {client.phone && (
                       <p className="text-gray-400 text-sm hidden sm:block">{client.phone}</p>
                     )}
