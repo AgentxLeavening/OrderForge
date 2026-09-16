@@ -730,6 +730,31 @@ strip on the dashboard.
   re-fetches on failure) — the point is triaging undated work without opening
   each order. Complete and Cancelled never appear.
 
+## Expenses (2026-09-16)
+The deduction side of the books, and the biggest remaining gap against
+Craftybase — orders captured what came in, nothing captured what went out.
+`expenses` table (migration 032), logic in `lib/expenses.ts` (tests:
+`test/expenses.test.ts`), page at `/dashboard/expenses`, plus nav links and a
+Reports card.
+
+- **Expenses are NOT an order's material/labour cost, and the two never mix.**
+  An order's cost is what the job *consumed* (drives margin); an expense is
+  money that left the bank on a date (drives tax). A 1kg spool bought in March
+  is one expense; the 25g it puts into a June order is a cost. Summing them
+  would double-count, so the tax CSV keeps them in separate sections.
+- **Tax export now covers both**: order rows as before, then an itemised
+  Expenses section and totals by category, in one file. The result line reports
+  both, and says explicitly when no expenses fall in the range.
+- **Standalone, not hung off inventory**: most expenses aren't stock (booth
+  fees, software), and a seller shouldn't have to model something as inventory
+  to record paying for it. `order_id` is optional for costs belonging to one
+  job, and survives the order's deletion (`on delete set null`) — the money was
+  still spent.
+- Date filtering compares `YYYY-MM-DD` **as strings** (`withinRange`), avoiding
+  the UTC-midnight trap that bit due dates (see the schedule section).
+- Not built: receipt photos, recurring expenses, and mileage-rate maths
+  (there's a `mileage` category, but it takes a dollar amount).
+
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —
   **implemented 2026-09-14**, no longer a blocker for onboarding other users.

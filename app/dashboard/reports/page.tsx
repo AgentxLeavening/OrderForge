@@ -16,7 +16,12 @@ const REPORTS = [
   {
     href: '/dashboard/reports/tax-export',
     title: 'Tax Season Export',
-    description: 'Download revenue, cost basis, and profit for every order in a date range, across every channel, in one CSV.',
+    description: 'Download revenue, cost basis, and profit for every order in a date range, across every channel — with your expenses itemised and totalled by category — in one CSV.',
+  },
+  {
+    href: '/dashboard/expenses',
+    title: 'Expenses',
+    description: 'Money going out: filament, packaging, postage, booth fees, tools and software, totalled by category for the year.',
   },
 ]
 

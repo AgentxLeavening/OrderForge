@@ -5,6 +5,16 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 import { computeOrderEconomics } from '@/lib/pricing'
+import { expenseCategoryLabel, totalExpenses, totalsByCategory } from '@/lib/expenses'
+
+type ExpenseRow = {
+  incurred_on: string
+  amount: number
+  category: string
+  vendor: string | null
+  note: string | null
+  orders?: { order_number: string } | null
+}
 
 const channelLabel = (value: string | null | undefined) =>
   CHANNEL_OPTIONS.find(o => o.value === (value || ''))?.label ?? (value || 'Not specified')
@@ -25,7 +35,7 @@ export default function TaxExportPage() {
   const [endDate, setEndDate] = useState(today())
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState('')
-  const [summary, setSummary] = useState<{ count: number; revenue: number; profit: number } | null>(null)
+  const [summary, setSummary] = useState<{ count: number; revenue: number; profit: number; expenses: number; expenseCount: number } | null>(null)
 
   const download = async () => {
     setDownloading(true)
@@ -70,7 +80,48 @@ export default function TaxExportPage() {
         ].map(csvField).join(','))
       }
 
-      setSummary({ count: rows.length, revenue: totalRevenue, profit: totalProfit })
+      // Expenses go in the same file, after the orders, under their own
+      // heading. One download is what an accountant gets handed, and income
+      // without deductions is only half the picture. Deliberately NOT summed
+      // into the order rows: an order's material cost is what the job consumed,
+      // while an expense is money that left the bank on a date — adding them
+      // together would double-count a spool bought in March and used in June.
+      const { data: expenseRows, error: expenseErr } = await supabase
+        .from('expenses')
+        .select('incurred_on, amount, category, vendor, note, orders(order_number)')
+        .eq('user_id', user.id)
+        .gte('incurred_on', startDate)
+        .lte('incurred_on', endDate)
+        .order('incurred_on', { ascending: true })
+
+      if (expenseErr) throw expenseErr
+      const expenses = (expenseRows || []) as unknown as ExpenseRow[]
+      const expenseTotal = totalExpenses(expenses)
+
+      if (expenses.length > 0) {
+        lines.push('')
+        lines.push(['Expenses'].map(csvField).join(','))
+        lines.push(['Date', 'Category', 'Vendor', 'Note', 'Order', 'Amount'].map(csvField).join(','))
+        for (const e of expenses) {
+          lines.push([
+            new Date(`${e.incurred_on}T00:00:00`).toLocaleDateString(),
+            expenseCategoryLabel(e.category),
+            e.vendor || '',
+            e.note || '',
+            e.orders?.order_number || '',
+            (Number(e.amount) || 0).toFixed(2),
+          ].map(csvField).join(','))
+        }
+
+        lines.push('')
+        lines.push(['Expense totals by category'].map(csvField).join(','))
+        for (const b of totalsByCategory(expenses)) {
+          lines.push([b.label, b.total.toFixed(2)].map(csvField).join(','))
+        }
+        lines.push(['Total expenses', expenseTotal.toFixed(2)].map(csvField).join(','))
+      }
+
+      setSummary({ count: rows.length, revenue: totalRevenue, profit: totalProfit, expenses: expenseTotal, expenseCount: expenses.length })
 
       const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
       const url = URL.createObjectURL(blob)
@@ -97,7 +148,9 @@ export default function TaxExportPage() {
           <Link href="/dashboard/reports" className="text-sm text-indigo-400 hover:text-indigo-300">← Reports</Link>
         </div>
         <p className="text-gray-500 text-sm mb-6">
-          One CSV of every order's revenue, cost basis, and profit for a date range — across every channel, cancelled orders excluded.
+          One CSV of every order&apos;s revenue, cost basis, and profit for a date range — across every channel, cancelled orders excluded —
+          followed by your <Link href="/dashboard/expenses" className="text-indigo-400 hover:text-indigo-300">expenses</Link> for the same
+          range, itemised and totalled by category.
         </p>
 
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
@@ -118,7 +171,10 @@ export default function TaxExportPage() {
 
           {summary && (
             <div className="bg-green-500/10 border border-green-500/20 text-green-400 px-4 py-3 rounded-lg text-sm">
-              Downloaded {summary.count} order{summary.count === 1 ? '' : 's'} — ${summary.revenue.toFixed(2)} revenue, ${summary.profit.toFixed(2)} profit.
+              Downloaded {summary.count} order{summary.count === 1 ? '' : 's'} — ${summary.revenue.toFixed(2)} revenue, ${summary.profit.toFixed(2)} profit
+              {summary.expenseCount > 0
+                ? ` · ${summary.expenseCount} expense${summary.expenseCount === 1 ? '' : 's'} totalling $${summary.expenses.toFixed(2)}.`
+                : ' · no expenses recorded in this range.'}
             </div>
           )}
 
