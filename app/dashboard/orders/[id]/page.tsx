@@ -8,6 +8,7 @@ import { generateInvoicePdf } from '@/lib/generateInvoicePdf'
 import { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 import { computeOrderEconomics } from '@/lib/pricing'
 import OrderPayments from '@/app/components/OrderPayments'
+import OrderTime from '@/app/components/OrderTime'
 
 
 type Order = {
@@ -32,6 +33,7 @@ type Order = {
   tracking_number: string | null
   product_id: string | null
   external_source: string | null
+  estimated_hours: number | null
 }
 
 type LineItem = {
@@ -130,6 +132,7 @@ export default function OrderDetailPage() {
   // Null until loaded; false means neither a Venmo nor a PayPal handle is set,
   // so quotes would go out with no way for the customer to pay from them.
   const [hasPayHandle, setHasPayHandle] = useState<boolean | null>(null)
+  const [hourlyRate, setHourlyRate] = useState<number | null>(null)
 
   // New line item
   const [newDesc, setNewDesc] = useState('')
@@ -164,11 +167,12 @@ export default function OrderDetailPage() {
 
       const { data: payProfile } = await supabase
         .from('profiles')
-        .select('venmo_username, paypal_me_name')
+        .select('venmo_username, paypal_me_name, hourly_rate')
         .eq('id', user.id)
         .maybeSingle()
 
       setHasPayHandle(!!(payProfile?.venmo_username || payProfile?.paypal_me_name))
+      setHourlyRate(payProfile?.hourly_rate == null ? null : Number(payProfile.hourly_rate))
       setClientOptions(clients || [])
       setProductOptions(products || [])
       setOrder(orderData)
@@ -786,6 +790,28 @@ const handleGenerateInvoice = async () => {
             </div>
           )}
         </div>
+
+        {order && (
+          <OrderTime
+            orderId={id}
+            estimatedHours={order.estimated_hours}
+            onEstimateSaved={hours => setOrder(o => (o ? { ...o, estimated_hours: hours } : o))}
+            // Same inputs as the Pricing & Margin card, so "earning per hour"
+            // and the margin can never tell different stories.
+            economics={(() => {
+              const e = computeOrderEconomics({
+                suggested_price: order.suggested_price,
+                material_cost: order.material_cost,
+                labor_cost: order.labor_cost,
+                estimated_shipping: Number(estimatedShipping) || 0,
+                shipping_buyer_covered: shippingBuyerCovered,
+                fee_pct: order.fee_pct,
+              })
+              return e.revenue > 0 ? { revenue: e.revenue, material: e.material, shipping: e.shipping, feeAmt: e.feeAmt } : null
+            })()}
+            hourlyRate={hourlyRate}
+          />
+        )}
 
         {order && (
           <OrderPayments
