@@ -707,6 +707,23 @@ a relationship, not a row in a ledger.
   the orders it's made of. Cancelled orders are excluded everywhere;
   marketplace imports count as paid.
 
+## Due dates & schedule (2026-09-15)
+Last of the four Craftybase differentiators: a ledger has no notion of a
+deadline, a workshop runs on them. `lib/schedule.ts` (tests:
+`test/schedule.test.ts`), page at `/dashboard/schedule`, plus a "🗓️ Due soon"
+strip on the dashboard.
+- **Timezone trap, fixed here and on the dashboard**: `orders.due_date` is a
+  `date` column ("YYYY-MM-DD"), and `new Date()` parses that as **UTC
+  midnight** — the evening before in the Americas, so an order due today read
+  as overdue. `parseDueDate` builds a local date; the dashboard's `isOverdue`
+  now goes through `daysUntilDue` for the same reason.
+- **"This week" = the next 7 days**, not the rest of the calendar week: on a
+  Saturday a Monday deadline is what matters, and a week that empties every
+  Sunday night would hide it.
+- The schedule page lets a due date be **set inline** on any row (optimistic,
+  re-fetches on failure) — the point is triaging undated work without opening
+  each order. Complete and Cancelled never appear.
+
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —
   **implemented 2026-09-14**, no longer a blocker for onboarding other users.
