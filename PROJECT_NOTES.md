@@ -752,8 +752,26 @@ Reports card.
   still spent.
 - Date filtering compares `YYYY-MM-DD` **as strings** (`withinRange`), avoiding
   the UTC-midnight trap that bit due dates (see the schedule section).
-- Not built: receipt photos, recurring expenses, and mileage-rate maths
-  (there's a `mileage` category, but it takes a dollar amount).
+- **Recurring expenses — added 2026-09-16** (migration 033, `lib/recurring.ts`,
+  tests `test/recurring.test.ts`). A cycle dropdown on the add form — One-off /
+  Monthly / Quarterly / Yearly — marks a **template**; `recurring_source_id`
+  links each generated row back to it, which is what makes "has this period
+  been recorded?" exact rather than guessed from matching amount+vendor.
+  - **Nothing is written without the seller clicking** (their explicit choice
+    over silent auto-adding: a cancelled subscription would otherwise keep
+    billing the books forever). The page shows a "🔁 N recurring expenses
+    haven't been recorded yet" banner listing vendor, amount and the exact
+    months, with one button.
+  - Occurrences step by cycle (1/3/12 months) from the template's month, the
+    template counts as its own period, generated copies never become templates
+    (no chains), and a backfill is capped at 12 occurrences.
+  - Billing day is clamped to month length: the 31st becomes the 30th in April,
+    the 28th/29th in February.
+  - The header shows a **monthly-equivalent run-rate**: quarterly and yearly
+    amounts are divided across their cycle, so $120/year reads as $10/mo and
+    commitments compare honestly.
+- Not built: receipt photos, and mileage-rate maths (there's a `mileage`
+  category, but it takes a dollar amount).
 
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —

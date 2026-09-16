@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { EXPENSE_CATEGORIES, expenseCategoryLabel, totalExpenses, totalsByCategory } from '@/lib/expenses'
+import { buildRecurringRows, dueRecurring, monthlyCommitment, recurrenceLabel, RECURRENCE_OPTIONS } from '@/lib/recurring'
 
 type Expense = {
   id: string
@@ -14,6 +15,8 @@ type Expense = {
   vendor: string | null
   note: string | null
   order_id: string | null
+  recurrence: string | null
+  recurring_source_id: string | null
   orders?: { order_number: string } | null
 }
 
@@ -36,13 +39,15 @@ export default function ExpensesPage() {
   const [vendor, setVendor] = useState('')
   const [incurredOn, setIncurredOn] = useState(todayLocal())
   const [note, setNote] = useState('')
+  const [recurrence, setRecurrence] = useState<string>('')
+  const [addingDue, setAddingDue] = useState(false)
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
     const { data, error: loadErr } = await supabase
       .from('expenses')
-      .select('id, incurred_on, amount, category, vendor, note, order_id, orders(order_number)')
+      .select('id, incurred_on, amount, category, vendor, note, order_id, recurrence, recurring_source_id, orders(order_number)')
       .eq('user_id', user.id)
       .order('incurred_on', { ascending: false })
       .order('created_at', { ascending: false })
@@ -80,13 +85,33 @@ export default function ExpensesPage() {
       vendor: vendor.trim() || null,
       note: note.trim() || null,
       incurred_on: incurredOn || todayLocal(),
+      recurrence: recurrence || null,
     })
     if (insErr) setError(insErr.message)
     else {
-      setAmount(''); setVendor(''); setNote('')
+      setAmount(''); setVendor(''); setNote(''); setRecurrence('')
       await load()
     }
     setSaving(false)
+  }
+
+  // Recurring expenses are templates: each period's copy is only written when
+  // the seller clicks here, so nothing lands in the books unseen (their call —
+  // silent auto-adding would keep billing a cancelled subscription).
+  const due = dueRecurring(expenses)
+  const dueCount = due.reduce((n, d) => n + d.months.length, 0)
+  const dueTotal = due.reduce((sum, d) => sum + d.months.length * (Number(d.template.amount) || 0), 0)
+  const commitment = monthlyCommitment(expenses)
+
+  const addDue = async () => {
+    setAddingDue(true)
+    setError('')
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setError('Not signed in.'); setAddingDue(false); return }
+    const { error: insErr } = await supabase.from('expenses').insert(buildRecurringRows(due, user.id))
+    if (insErr) setError(insErr.message)
+    else await load()
+    setAddingDue(false)
   }
 
   const removeExpense = async (expense: Expense) => {
@@ -120,12 +145,46 @@ export default function ExpensesPage() {
             <input value={vendor} onChange={e => setVendor(e.target.value)} placeholder="Where from" className={`${inputClass} md:col-span-2`} />
             <input type="date" value={incurredOn} onChange={e => setIncurredOn(e.target.value)} className={`${inputClass} md:col-span-2`} />
             <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (optional)" className={`${inputClass} md:col-span-2`} />
+            <select value={recurrence} onChange={e => setRecurrence(e.target.value)} className={`${inputClass} md:col-span-2`} aria-label="How often it repeats">
+              {RECURRENCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
             <button onClick={addExpense} disabled={saving} className="col-span-2 md:col-span-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition text-sm disabled:opacity-50">
               {saving ? '…' : 'Add'}
             </button>
           </div>
+          {recurrence && (
+            <p className="text-gray-500 text-xs mt-2">
+              Saved as a {recurrenceLabel(recurrence).toLowerCase()} expense — I&apos;ll remind you here when the next one is due, and you decide whether to record it.
+            </p>
+          )}
           {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
         </div>
+
+        {dueCount > 0 && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 mb-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <p className="text-amber-300 font-semibold">
+                🔁 {dueCount} recurring {dueCount === 1 ? 'expense hasn’t' : 'expenses haven’t'} been recorded yet · {money(dueTotal)}
+              </p>
+              <button
+                onClick={addDue}
+                disabled={addingDue}
+                className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-sm font-semibold px-4 py-2 rounded-lg transition disabled:opacity-50"
+              >
+                {addingDue ? 'Adding…' : 'Record them'}
+              </button>
+            </div>
+            <ul className="text-amber-200/70 text-sm mt-2 space-y-0.5">
+              {due.map(d => (
+                <li key={d.template.id}>
+                  {[d.template.vendor, expenseCategoryLabel(d.template.category)].filter(Boolean).join(' · ')} — {money(Number(d.template.amount) || 0)}
+                  {' × '}{d.months.length} ({d.months.map(m => new Date(`${m}-01T00:00:00`).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })).join(', ')})
+                </li>
+              ))}
+            </ul>
+            <p className="text-amber-200/50 text-xs mt-2">Nothing is added to your books until you click Record them.</p>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <select value={year} onChange={e => setYear(e.target.value)} className={inputClass}>
@@ -136,6 +195,9 @@ export default function ExpensesPage() {
             {EXPENSE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
           <p className="ml-auto text-gray-400 text-sm">
+            {commitment > 0 && (
+              <span className="mr-4">recurring ≈ <span className="text-white">{money(commitment)}</span>/mo</span>
+            )}
             {year} total <span className="text-white font-semibold">{money(yearTotal)}</span>
           </p>
         </div>
@@ -167,7 +229,14 @@ export default function ExpensesPage() {
             {visible.map(e => (
               <div key={e.id} className="bg-gray-800 rounded-lg px-4 py-3 text-sm flex flex-col gap-1 md:flex-row md:items-center md:gap-4">
                 <span className="text-gray-400 md:w-28 shrink-0">{new Date(`${e.incurred_on}T00:00:00`).toLocaleDateString()}</span>
-                <span className="text-white md:w-52 shrink-0">{expenseCategoryLabel(e.category)}</span>
+                <span className="text-white md:w-52 shrink-0">
+                  {expenseCategoryLabel(e.category)}
+                  {e.recurrence && (
+                    <span className="ml-1.5 text-[10px] uppercase tracking-wide bg-indigo-500/15 text-indigo-300 px-1.5 py-0.5 rounded-full">
+                      {recurrenceLabel(e.recurrence)}
+                    </span>
+                  )}
+                </span>
                 <span className="text-gray-400 flex-1 min-w-0 truncate">
                   {[e.vendor, e.note].filter(Boolean).join(' · ')}
                   {e.orders?.order_number && (
