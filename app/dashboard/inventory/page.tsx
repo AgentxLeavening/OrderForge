@@ -152,7 +152,9 @@ export default function InventoryPage() {
           <p className="text-gray-400">Loading…</p>
         ) : (
           <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
-            <div className="grid grid-cols-12 gap-2 text-gray-400 text-xs uppercase tracking-wide px-2 mb-2">
+            {/* Column headings belong to the desktop table only — on a phone
+                each item is a stacked card, where headings would be noise. */}
+            <div className="hidden md:grid grid-cols-12 gap-2 text-gray-400 text-xs uppercase tracking-wide px-2 mb-2">
               <div className="col-span-4">Name</div>
               <div className="col-span-2">Category</div>
               <div className="col-span-2">SKU</div>
@@ -162,23 +164,39 @@ export default function InventoryPage() {
             </div>
             <div className="space-y-2">
               {items.map(it => (
-                <div key={it.id} className="grid grid-cols-12 gap-2 items-center bg-gray-800 rounded-lg px-4 py-3">
-                  <div className="col-span-4 text-white">{it.name}</div>
-                  <div className="col-span-2">
-                    <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">{categoryLabel(it.category).split(' ')[0]}</span>
+                <div
+                  key={it.id}
+                  className="bg-gray-800 rounded-lg px-4 py-3 flex flex-col gap-2 md:grid md:grid-cols-12 md:gap-2 md:items-center md:space-y-0"
+                >
+                  {/* Phone: name and actions share the top line, so the
+                      buttons have a fixed home instead of being squeezed into
+                      a 1/12th column next to the cost. */}
+                  <div className="flex items-start justify-between gap-2 md:contents">
+                    <div className="md:col-span-4 text-white min-w-0 break-words">{it.name}</div>
+                    <div className="flex items-center gap-3 shrink-0 md:col-span-1 md:order-last md:justify-end">
+                      <button onClick={() => setEditing(it)} className="text-gray-400 hover:text-white text-sm">Edit</button>
+                      <button onClick={() => remove(it.id)} className="text-red-500 hover:text-red-400 text-lg leading-none">×</button>
+                    </div>
                   </div>
-                  <div className="col-span-2 text-gray-400">{it.sku || '—'}</div>
-                  <div className="col-span-2 text-center">
-                    <span className={isLowStock(it) ? 'text-amber-400 font-medium' : 'text-white'}>{it.quantity}</span>
-                    {' '}<span className="text-gray-500 text-xs">{unitShort(it.unit)}</span>
-                    {isLowStock(it) && (
-                      <span className="ml-1.5 text-[10px] uppercase tracking-wide bg-amber-500/15 text-amber-400 px-1.5 py-0.5 rounded-full">Low</span>
-                    )}
-                  </div>
-                  <div className="col-span-1 text-right text-gray-400">${Number(it.unit_cost || 0).toFixed(2)}</div>
-                  <div className="col-span-1 flex items-center justify-end gap-2">
-                    <button onClick={() => setEditing(it)} className="text-gray-400 hover:text-white">Edit</button>
-                    <button onClick={() => remove(it.id)} className="text-red-500 hover:text-red-400">×</button>
+
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 md:contents">
+                    <div className="md:col-span-2">
+                      <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">{categoryLabel(it.category).split(' ')[0]}</span>
+                    </div>
+                    <div className="md:col-span-2 text-gray-400 text-sm">
+                      <span className="md:hidden text-gray-600">SKU </span>{it.sku || '—'}
+                    </div>
+                    <div className="md:col-span-2 md:text-center text-sm">
+                      <span className={isLowStock(it) ? 'text-amber-400 font-medium' : 'text-white'}>{it.quantity}</span>
+                      {' '}<span className="text-gray-500 text-xs">{unitShort(it.unit)}</span>
+                      {isLowStock(it) && (
+                        <span className="ml-1.5 text-[10px] uppercase tracking-wide bg-amber-500/15 text-amber-400 px-1.5 py-0.5 rounded-full">Low</span>
+                      )}
+                    </div>
+                    <div className="md:col-span-1 md:text-right text-gray-400 text-sm">
+                      ${Number(it.unit_cost || 0).toFixed(2)}
+                      <span className="md:hidden text-gray-600"> / {unitShort(it.unit)}</span>
+                    </div>
                   </div>
                 </div>
               ))}

@@ -692,7 +692,7 @@ const handleGenerateInvoice = async () => {
 
           {/* Header */}
           {lineItems.length > 0 && (
-            <div className="grid grid-cols-12 gap-2 mb-2 px-1">
+            <div className="hidden sm:grid grid-cols-12 gap-2 mb-2 px-1">
               <p className="col-span-6 text-gray-500 text-xs uppercase tracking-wide">Description</p>
               <p className="col-span-2 text-gray-500 text-xs uppercase tracking-wide text-center">Qty</p>
               <p className="col-span-2 text-gray-500 text-xs uppercase tracking-wide text-right">Price</p>
@@ -708,8 +708,8 @@ const handleGenerateInvoice = async () => {
             {lineItems.map(item => {
               const excluded = item.item_type === 'shipping' && item.buyer_covered === false
               return (
-                <div key={item.id} className="grid grid-cols-12 gap-2 items-center bg-gray-800 rounded-lg px-4 py-3">
-                  <div className="col-span-6">
+                <div key={item.id} className="bg-gray-800 rounded-lg px-4 py-3 flex flex-col gap-2 sm:grid sm:grid-cols-12 sm:gap-2 sm:items-center">
+                  <div className="sm:col-span-6">
                     <p className="text-white text-sm">{item.description}</p>
                     {item.item_type === 'shipping' && (
                       <label className="flex items-center gap-1.5 mt-1 text-xs text-gray-500 cursor-pointer">
@@ -723,15 +723,21 @@ const handleGenerateInvoice = async () => {
                       </label>
                     )}
                   </div>
-                  <input
-                    value={item.quantity}
-                    onChange={e => updateLineItemQty(item.id, e.target.value)}
-                    type="number"
-                    min="1"
-                    className="col-span-2 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 text-sm text-center focus:outline-none focus:border-indigo-500"
-                  />
-                  <p className="col-span-2 text-gray-400 text-sm text-right">${item.unit_price.toFixed(2)}</p>
-                  <div className="col-span-2 flex items-center justify-end gap-2">
+                  {/* Phone: qty, unit price and total sit on one row under the
+                      description instead of four columns fighting for 40px. */}
+                  <div className="flex items-center gap-3 sm:contents">
+                    <input
+                      value={item.quantity}
+                      onChange={e => updateLineItemQty(item.id, e.target.value)}
+                      type="number"
+                      min="1"
+                      aria-label="Quantity"
+                      className="w-16 sm:w-auto sm:col-span-2 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 text-sm text-center focus:outline-none focus:border-indigo-500"
+                    />
+                    <p className="sm:col-span-2 text-gray-400 text-sm sm:text-right">
+                      <span className="sm:hidden text-gray-600">× </span>${item.unit_price.toFixed(2)}
+                    </p>
+                    <div className="sm:col-span-2 flex items-center justify-end gap-2 ml-auto sm:ml-0">
                     <p className={`text-sm font-medium ${excluded ? 'text-gray-600 line-through' : 'text-white'}`}>
                       ${(item.quantity * item.unit_price).toFixed(2)}
                     </p>
@@ -741,6 +747,7 @@ const handleGenerateInvoice = async () => {
                     >
                       ×
                     </button>
+                    </div>
                   </div>
                 </div>
               )
@@ -748,12 +755,12 @@ const handleGenerateInvoice = async () => {
           </div>
 
           {/* Add Line Item */}
-          <div className="grid grid-cols-12 gap-2 items-center border-t border-gray-800 pt-4">
+          <div className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center border-t border-gray-800 pt-4">
             <input
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
               placeholder="Description"
-              className="col-span-6 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500"
+              className="col-span-2 sm:col-span-6 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500"
             />
             <input
               value={newQty}
@@ -761,7 +768,7 @@ const handleGenerateInvoice = async () => {
               placeholder="Qty"
               type="number"
               min="1"
-              className="col-span-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500 text-center"
+              className="sm:col-span-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500 text-center"
             />
             <input
               value={newPrice}
@@ -770,11 +777,11 @@ const handleGenerateInvoice = async () => {
               type="number"
               min="0"
               step="0.01"
-              className="col-span-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500 text-right"
+              className="sm:col-span-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500 text-right"
             />
             <button
               onClick={addLineItem}
-              className="col-span-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition text-sm"
+              className="col-span-2 sm:col-span-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition text-sm"
             >
               + Add
             </button>
