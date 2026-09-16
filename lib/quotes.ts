@@ -12,6 +12,17 @@ export type QuoteSnapshotItem = {
   buyerCovered?: boolean | null
 }
 
+/**
+ * A deposit asked for up front — "50% to book". Stored in the snapshot with
+ * the percentage that produced it, so the quote records the terms as sent even
+ * if the seller's defaults change later.
+ */
+export type QuoteDeposit = {
+  amount: number
+  /** null when the seller typed a fixed amount rather than a percentage. */
+  percent: number | null
+}
+
 export type QuoteSnapshot = {
   items: QuoteSnapshotItem[]
   subtotal: number
@@ -22,6 +33,32 @@ export type QuoteSnapshot = {
   clientName: string | null
   orderTitle: string
   orderNumber: string
+  /** Absent on quotes sent before deposits existed, and on quotes with none. */
+  deposit?: QuoteDeposit | null
+}
+
+export type DepositRequest =
+  | { type: 'none' }
+  | { type: 'percent'; value: number }
+  | { type: 'fixed'; value: number }
+
+/**
+ * The deposit for a quote total, or null for none.
+ *
+ * Clamped to the total: asking for more up front than the job costs is always
+ * a mistake, and a negative or unparseable value means "no deposit" rather
+ * than an error the seller has to deal with mid-send. Rounded to cents so the
+ * figure on the quote is exactly what the pay button asks for.
+ */
+export function computeDeposit(total: number, request: DepositRequest | null | undefined): QuoteDeposit | null {
+  if (!request || request.type === 'none') return null
+  const value = Number(request.value)
+  if (!Number.isFinite(value) || value <= 0) return null
+
+  const raw = request.type === 'percent' ? (Number(total) || 0) * (value / 100) : value
+  const amount = Math.round(Math.min(raw, Number(total) || 0) * 100) / 100
+  if (amount <= 0) return null
+  return { amount, percent: request.type === 'percent' ? value : null }
 }
 
 export type QuoteStatus = 'draft' | 'sent' | 'viewed' | 'accepted' | 'declined' | 'expired'

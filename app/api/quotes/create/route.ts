@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
-import { generateQuoteToken, billableLineTotal, type QuoteSnapshot } from '@/lib/quotes'
+import { generateQuoteToken, billableLineTotal, computeDeposit, type DepositRequest, type QuoteSnapshot } from '@/lib/quotes'
 
 // POST /api/quotes/create  { orderId, message?, validUntil? }
 //
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
 
-  let body: { orderId?: string; message?: string; validUntil?: string }
+  let body: { orderId?: string; message?: string; validUntil?: string; deposit?: DepositRequest }
   try {
     body = await request.json()
   } catch {
@@ -63,12 +63,17 @@ export async function POST(request: NextRequest) {
   const taxAmount = Math.round(subtotal * (taxRate / 100) * 100) / 100
   const total = Math.round((subtotal + taxAmount) * 100) / 100
 
+  // Computed server-side from the total, like every other amount here — the
+  // browser doesn't get to name what the customer will be asked for.
+  const deposit = computeDeposit(total, body.deposit)
+
   const snapshot: QuoteSnapshot = {
     items: lineItems,
     subtotal,
     taxRate,
     taxAmount,
     total,
+    deposit,
     businessName: profile?.business_name || 'My Shop',
     clientName: client?.name ?? null,
     orderTitle: order.title,
@@ -89,6 +94,7 @@ export async function POST(request: NextRequest) {
       token,
       status: 'sent',
       valid_until: body.validUntil || null,
+      deposit_amount: deposit?.amount ?? null,
       snapshot,
       message: body.message?.trim() || null,
     })
