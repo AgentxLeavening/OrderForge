@@ -4,6 +4,14 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
+import {
+  amountDue,
+  isOwed,
+  summarizePayments,
+  type BillableLine,
+  type PaymentRecord,
+  type PaymentSummary,
+} from '@/lib/payments'
 
 type Client = {
   id: string
@@ -22,6 +30,7 @@ type Order = {
   order_number: string
   due_date: string | null
   created_at: string
+  external_source: string | null
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -37,8 +46,12 @@ const STATUS_COLORS: Record<string, string> = {
   inquiry: 'bg-gray-700 text-gray-300',
   quoted: 'bg-yellow-500/20 text-yellow-400',
   in_progress: 'bg-blue-500/20 text-blue-400',
+  shipped: 'bg-purple-500/20 text-purple-400',
   complete: 'bg-green-500/20 text-green-400',
+  cancelled: 'bg-red-500/20 text-red-400',
 }
+
+const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`
 
 const TYPE_EMOJI: Record<string, string> = {
   commission: '🎨',
@@ -55,6 +68,10 @@ export default function ClientDetailPage() {
 
   const [client, setClient] = useState<Client | null>(null)
   const [orders, setOrders] = useState<Order[]>([])
+  // Per-order money, worked out with the same rules as the order page's
+  // Payments card (lib/payments.ts) so a client's balance can't disagree with
+  // the orders it's made of.
+  const [summaries, setSummaries] = useState<Record<string, PaymentSummary>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -93,7 +110,39 @@ export default function ClientDetailPage() {
         .eq('client_id', id)
         .order('created_at', { ascending: false })
 
-      setOrders(orderData || [])
+      const clientOrders = (orderData || []) as Order[]
+      setOrders(clientOrders)
+
+      const orderIds = clientOrders.map(o => o.id)
+      if (orderIds.length > 0) {
+        const [items, invoices, quotes, payments] = await Promise.all([
+          supabase.from('order_items').select('order_id, quantity, unit_price, item_type, buyer_covered').in('order_id', orderIds),
+          supabase.from('invoices').select('order_id, total, created_at').in('order_id', orderIds).order('created_at', { ascending: true }),
+          supabase.from('quotes').select('order_id, snapshot, responded_at').in('order_id', orderIds).eq('status', 'accepted').order('responded_at', { ascending: true }),
+          supabase.from('order_payments').select('order_id, amount, kind').in('order_id', orderIds),
+        ])
+
+        const itemsBy: Record<string, BillableLine[]> = {}
+        ;(items.data || []).forEach(it => { (itemsBy[it.order_id] ||= []).push(it) })
+        const invoiceTotal: Record<string, number | null> = {}
+        ;(invoices.data || []).forEach(inv => { invoiceTotal[inv.order_id] = inv.total })
+        const quoteTotal: Record<string, number | null> = {}
+        ;(quotes.data || []).forEach(q => { quoteTotal[q.order_id] = (q.snapshot as { total?: number } | null)?.total ?? null })
+        const paymentsBy: Record<string, PaymentRecord[]> = {}
+        ;(payments.data || []).forEach(p => { (paymentsBy[p.order_id] ||= []).push(p) })
+
+        const next: Record<string, PaymentSummary> = {}
+        for (const o of clientOrders) {
+          const due = amountDue({
+            lineItems: itemsBy[o.id] || [],
+            latestInvoiceTotal: invoiceTotal[o.id],
+            acceptedQuoteTotal: quoteTotal[o.id],
+          })
+          next[o.id] = summarizePayments({ due: due.amount, payments: paymentsBy[o.id] || [], isMarketplace: !!o.external_source })
+        }
+        setSummaries(next)
+      }
+
       setLoading(false)
     }
 
@@ -176,6 +225,41 @@ export default function ClientDetailPage() {
           </button>
         </div>
 
+        {/* Money, at a glance: what this client is worth, what they've paid,
+            and what's still outstanding. Cancelled orders are excluded from
+            every figure — they were never billed. */}
+        {(() => {
+          const live = orders.filter(o => o.status !== 'cancelled')
+          const billed = live.reduce((s, o) => s + (summaries[o.id]?.due ?? 0), 0)
+          const paid = live.reduce((s, o) => s + (summaries[o.id]?.paid ?? 0), 0)
+          const owedOrders = live.filter(o => summaries[o.id] && isOwed(summaries[o.id], o.status))
+          const outstanding = owedOrders.reduce((s, o) => s + summaries[o.id].balance, 0)
+
+          return (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+              <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+                <p className="text-gray-500 text-xs">Orders</p>
+                <p className="text-white text-xl font-semibold">{live.length}</p>
+              </div>
+              <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+                <p className="text-gray-500 text-xs">Lifetime value</p>
+                <p className="text-white text-xl font-semibold">{money(billed)}</p>
+              </div>
+              <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+                <p className="text-gray-500 text-xs">Paid</p>
+                <p className="text-white text-xl font-semibold">{money(paid)}</p>
+              </div>
+              <div className={`rounded-2xl p-4 border ${outstanding > 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-gray-900 border-gray-800'}`}>
+                <p className={outstanding > 0 ? 'text-emerald-300/80 text-xs' : 'text-gray-500 text-xs'}>Outstanding</p>
+                <p className={`text-xl font-semibold ${outstanding > 0 ? 'text-emerald-300' : 'text-white'}`}>{money(outstanding)}</p>
+                {owedOrders.length > 0 && (
+                  <p className="text-emerald-300/70 text-[11px] mt-0.5">across {owedOrders.length} order{owedOrders.length === 1 ? '' : 's'}</p>
+                )}
+              </div>
+            </div>
+          )
+        })()}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           {/* Contact Info */}
           <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
@@ -257,6 +341,17 @@ export default function ClientDetailPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                    {(() => {
+                      const summary = summaries[order.id]
+                      if (!summary || order.status === 'cancelled') return null
+                      if (isOwed(summary, order.status)) {
+                        return <p className="text-emerald-400 text-xs whitespace-nowrap">Owes {money(summary.balance)}</p>
+                      }
+                      if (summary.status === 'paid' || summary.status === 'marketplace') {
+                        return <p className="text-gray-500 text-xs whitespace-nowrap">Paid</p>
+                      }
+                      return null
+                    })()}
                     {order.due_date && (
                       <p className="text-gray-400 text-xs hidden sm:block">
                         Due {new Date(order.due_date).toLocaleDateString()}

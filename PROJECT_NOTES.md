@@ -695,6 +695,18 @@ on the order page.
   Settings hourly rate, and fed the same inputs as the Pricing & Margin card
   so the two can't disagree.
 
+## Client view with money (2026-09-15)
+Third of the four Craftybase differentiators — a repeat commission customer is
+a relationship, not a row in a ledger.
+- **Client page**: four figures (orders, lifetime value, paid, outstanding),
+  and each order in the list shows "Owes $X" or "Paid".
+- **Clients list**: an "Owes $X" badge per client, loaded *after* the list
+  renders so nobody waits on money maths to see their clients.
+- Both reuse `lib/payments.ts` (`amountDue` → `summarizePayments` → `isOwed`)
+  rather than re-deriving balances, so a client total can never disagree with
+  the orders it's made of. Cancelled orders are excluded everywhere;
+  marketplace imports count as paid.
+
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —
   **implemented 2026-09-14**, no longer a blocker for onboarding other users.
