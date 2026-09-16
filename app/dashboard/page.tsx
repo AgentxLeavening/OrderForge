@@ -8,7 +8,7 @@ import DashboardWidget from '@/app/components/DashboardWidget'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import { isLowStock, unitShort } from '@/lib/inventory'
 import { computeOrderEconomics } from '@/lib/pricing'
-import { amountDue, isOwed, summarizePayments, type BillableLine, type PaymentRecord } from '@/lib/payments'
+import { amountDue, isOwed, summarizePayments, type BillableLine, type PaymentRecord, type PaymentSummary } from '@/lib/payments'
 import { daysUntilDue, dueLabel, groupByDue } from '@/lib/schedule'
 import Link from 'next/link'
 
@@ -105,7 +105,7 @@ export default function DashboardPage() {
   const [topRevenueClients, setTopRevenueClients] = useState<{ name: string; total: number }[]>([])
   const [invoiceCounts, setInvoiceCounts] = useState<{ name: string; count: number }[]>([])
   const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
-  const [owedOrders, setOwedOrders] = useState<OwedOrder[]>([])
+  const [summaryByOrder, setSummaryByOrder] = useState<Record<string, PaymentSummary>>({})
   const [selectedClientId, setSelectedClientId] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -189,7 +189,11 @@ export default function DashboardPage() {
     const paymentsByOrder: Record<string, PaymentRecord[]> = {}
     ;(payments || []).forEach(p => { (paymentsByOrder[p.order_id] ||= []).push(p) })
 
-    const owed: OwedOrder[] = []
+    // Store the per-order money, not the finished "owed" list: whether an
+    // order is owed depends on its STATUS, which changes locally whenever a
+    // card is dragged between columns. Deriving the list at render (below)
+    // keeps the banner honest without re-querying on every drag.
+    const summaries: Record<string, PaymentSummary> = {}
     ordersData.forEach(o => {
       if (o.external_source) return
       const due = amountDue({
@@ -197,10 +201,9 @@ export default function DashboardPage() {
         latestInvoiceTotal: invoiceTotalByOrder[o.id],
         acceptedQuoteTotal: quoteTotalByOrder[o.id],
       })
-      const summary = summarizePayments({ due: due.amount, payments: paymentsByOrder[o.id] || [], isMarketplace: false })
-      if (isOwed(summary, o.status)) owed.push({ id: o.id, title: o.title, balance: summary.balance, partial: summary.status === 'partial' })
+      summaries[o.id] = summarizePayments({ due: due.amount, payments: paymentsByOrder[o.id] || [], isMarketplace: false })
     })
-    setOwedOrders(owed.sort((a, b) => b.balance - a.balance))
+    setSummaryByOrder(summaries)
     invoiceList.forEach(inv => {
       const order = ordersData.find(o => o.id === inv.order_id)
       const clientName = order?.client_id
@@ -644,7 +647,21 @@ export default function DashboardPage() {
   }
 
   // One card, used by both the board columns and the archive sections below.
+  // Derived, not stored: recomputes the moment an order's status changes
+  // locally (a drag between columns), so the banner and the card badges can't
+  // disagree with the board until the next reload.
+  const owedOrders: OwedOrder[] = orders
+    .filter(o => summaryByOrder[o.id] && isOwed(summaryByOrder[o.id], o.status))
+    .map(o => ({
+      id: o.id,
+      title: o.title,
+      balance: summaryByOrder[o.id].balance,
+      partial: summaryByOrder[o.id].status === 'partial',
+    }))
+    .sort((a, b) => b.balance - a.balance)
+
   const owedById = new Map(owedOrders.map(o => [o.id, o]))
+
 
   const renderOrderCard = (order: Order, index: number) => {
     const clientName = Array.isArray(order.clients)
