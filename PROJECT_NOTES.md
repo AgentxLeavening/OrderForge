@@ -671,6 +671,30 @@ page) plus a "💵 owed to you" banner and "Owes $X" on board cards.
   reference by hand. Both buttons share one "Ready to pay?" panel.
 - Next: Stripe (card payments from the quote link), discussed but not started.
 
+## Estimated vs actual time (2026-09-15)
+Second of the four Craftybase differentiators. For commission work labour is
+the real cost, so this is the maker's answer to materials-based COGS: "am I
+actually earning my hourly rate on this kind of job?".
+
+`order_time_entries` + `orders.estimated_hours` (migration 031), maths in
+`lib/time.ts` (tests: `test/time.test.ts`), UI in `app/components/OrderTime.tsx`
+on the order page.
+- **Timer or manual entry.** A running timer is the row with `started_at` and
+  no `minutes`; stopping writes the elapsed minutes. A partial unique index
+  allows only one running timer per order, so a forgotten one can't stack.
+  `totalMinutes` counts a running timer up to now (clamped at 0, in case the
+  clock disagrees) and the card re-renders every 30s.
+- **`orders.estimated_hours` is captured at creation** (`NewOrderModal`:
+  product `est_time` × quantity) rather than derived from
+  `labor_cost ÷ hourly_rate` later — the rate changes, and an order should be
+  judged against the hours it was actually priced for. Editable on the order,
+  and editing it deliberately does **not** re-price the order.
+- **"Earning per hour" = (revenue − materials − shipping − fees) ÷ actual
+  hours**, NOT profit ÷ hours: profit already has estimated labour subtracted,
+  so dividing it by hours charges the same work twice. Compared against the
+  Settings hourly rate, and fed the same inputs as the Pricing & Margin card
+  so the two can't disagree.
+
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —
   **implemented 2026-09-14**, no longer a blocker for onboarding other users.

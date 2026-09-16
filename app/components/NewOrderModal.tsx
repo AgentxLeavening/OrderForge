@@ -194,6 +194,10 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
       suggested_price: finalSuggestedPrice || null,
       material_cost: selectedProduct ? Number(materialCost.toFixed(2)) : null,
       labor_cost: selectedProduct ? Number(laborCost.toFixed(2)) : null,
+      // The hours this order's price was built from — kept as its own field so
+      // time tracking can compare against the estimate as it stood, even if
+      // the hourly rate or the product's est_time changes later.
+      estimated_hours: selectedProduct ? Number((unitMultiplier * (Number(selectedProduct.est_time) || 0)).toFixed(2)) : null,
       markup: selectedProduct ? markup : null,
       fee_pct: selectedProduct ? feePct : null,
       product_id: selectedProduct?.id || null,
