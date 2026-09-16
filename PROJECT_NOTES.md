@@ -642,6 +642,13 @@ page) plus a "💵 owed to you" banner and "Owes $X" on board cards.
   **Not yet tested on a real phone** — worth one check that the Venmo app
   opens with amount and note filled in. Payments made this way still need
   recording on the order's Payments card; Venmo has no API to confirm them.
+- **"Mark $X paid" button** (2026-09-15) — one click records the remaining
+  balance, today's date, and the method currently selected in the form. Added
+  because neither Venmo nor PayPal can report a payment back to us (Venmo has
+  no API for it; PayPal only reports through a full business integration, not
+  PayPal.Me), so recording is unavoidably manual and the typing was the cost.
+  The "fill in remaining balance" link remains for when the date or note
+  matters. Stripe stays the only route to automatic confirmation.
 - **PayPal pay button — built 2026-09-15.** Same pattern: Settings stores
   `profiles.paypal_me_name` (migration 029; `lib/paypal.ts` accepts pasted
   `paypal.me/…` or `paypal.com/paypalme/…` links), and accepted quotes show

@@ -83,8 +83,12 @@ export default function OrderPayments({
   const summary = summarizePayments({ due: due.amount, payments, isMarketplace: !!marketplaceLabel })
   const badge = PAYMENT_STATUS_BADGE[summary.status]
 
-  const addPayment = async () => {
-    const value = Math.round(Number(amount) * 100) / 100
+  // `override` is the one-click "Mark paid in full" path: the remaining
+  // balance, paid today, by the method currently selected. Venmo and PayPal
+  // can't report payments back to us (no API for it), so recording is always
+  // manual — this just removes the typing.
+  const addPayment = async (override?: { amount: number; note?: string }) => {
+    const value = override ? Math.round(override.amount * 100) / 100 : Math.round(Number(amount) * 100) / 100
     if (!(value > 0)) { setError('Enter an amount greater than zero.'); return }
     setSaving(true)
     setError('')
@@ -95,10 +99,10 @@ export default function OrderPayments({
       user_id: user.id,
       order_id: orderId,
       amount: value,
-      kind,
+      kind: override ? 'payment' : kind,
       method,
-      paid_at: paidAt || todayLocal(),
-      note: note.trim() || null,
+      paid_at: override ? todayLocal() : (paidAt || todayLocal()),
+      note: (override ? override.note : note.trim()) || null,
     })
     if (insErr) {
       setError(insErr.message)
@@ -138,6 +142,22 @@ export default function OrderPayments({
         <h2 className="text-white font-semibold">Payments</h2>
         {!loading && <span className={`text-xs px-2 py-1 rounded-full ${badge.className}`}>{badge.label}</span>}
       </div>
+
+      {hasBalance(summary.balance) && (
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <button
+            type="button"
+            onClick={() => addPayment({ amount: summary.balance, note: payments.length ? 'Balance paid' : 'Paid in full' })}
+            disabled={saving}
+            className="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : `Mark ${money(summary.balance)} paid`}
+          </button>
+          <span className="text-gray-500 text-xs">
+            Records today&apos;s date and the method selected below ({paymentMethodLabel(method)}).
+          </span>
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-3 mb-5">
         <div className="bg-gray-800 rounded-lg p-3">
@@ -194,7 +214,7 @@ export default function OrderPayments({
           <input type="date" value={paidAt} onChange={e => setPaidAt(e.target.value)} className={`${inputClass} md:col-span-2`} />
           <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (e.g. deposit)" className={`${inputClass} md:col-span-2`} />
           <button
-            onClick={addPayment}
+            onClick={() => addPayment()}
             disabled={saving}
             className="md:col-span-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition text-sm disabled:opacity-50"
           >
@@ -207,7 +227,7 @@ export default function OrderPayments({
             onClick={() => { setKind('payment'); setAmount(summary.balance.toFixed(2)) }}
             className="text-xs text-indigo-400 hover:text-indigo-300 mt-2"
           >
-            Fill in remaining balance ({money(summary.balance)})
+            Fill in remaining balance ({money(summary.balance)}) to edit the date or note
           </button>
         )}
         {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
