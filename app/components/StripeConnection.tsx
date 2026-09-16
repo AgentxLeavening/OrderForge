@@ -22,6 +22,8 @@ export default function StripeConnection({ notice }: { notice: string | null }) 
   const [account, setAccount] = useState<Account | null>(null)
   const [loading, setLoading] = useState(true)
   const [starting, setStarting] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [status, setStatus] = useState<{ charges_enabled: boolean; disabled_reason: string | null; requirements: string[] } | null>(null)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
@@ -50,6 +52,25 @@ export default function StripeConnection({ notice }: { notice: string | null }) 
       setError(e instanceof Error ? e.message : String(e))
       setStarting(false)
     }
+  }
+
+  // Pulls the live state from Stripe rather than trusting our copy, which the
+  // account.updated webhook keeps current only when that webhook is actually
+  // configured for connected accounts.
+  const refresh = async () => {
+    setRefreshing(true)
+    setError('')
+    setStatus(null)
+    try {
+      const res = await fetch('/api/stripe/status', { method: 'POST' })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error || 'Could not check with Stripe.')
+      setStatus(json)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setRefreshing(false)
   }
 
   const ready = account?.charges_enabled
@@ -96,6 +117,15 @@ export default function StripeConnection({ notice }: { notice: string | null }) 
           >
             {starting ? 'Opening Stripe…' : account ? 'Continue Stripe setup' : 'Connect Stripe'}
           </button>
+          {account && (
+            <button
+              onClick={refresh}
+              disabled={refreshing}
+              className="text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-3 py-2 rounded-lg transition disabled:opacity-50"
+            >
+              {refreshing ? 'Checking…' : 'Refresh status'}
+            </button>
+          )}
           {ready && (
             <a
               href={account.livemode ? 'https://dashboard.stripe.com/payments' : 'https://dashboard.stripe.com/test/payments'}
@@ -118,6 +148,20 @@ export default function StripeConnection({ notice }: { notice: string | null }) 
         <p className="text-gray-600 text-xs mt-3">
           Stripe charges its usual per-payment fee and pays out to your bank. OrderForge takes nothing and never holds your money.
         </p>
+      )}
+      {status && (
+        status.charges_enabled ? (
+          <p className="text-green-400 text-sm mt-3">Stripe says you&apos;re ready — card payments are live on your quotes.</p>
+        ) : (
+          <div className="text-amber-300 text-sm mt-3">
+            <p>Stripe isn&apos;t accepting charges on this account yet{status.disabled_reason ? ` (${status.disabled_reason})` : ''}.</p>
+            {status.requirements.length > 0 && (
+              <p className="text-amber-200/70 text-xs mt-1">
+                Still wanted: {status.requirements.join(', ')} — finish these in your Stripe dashboard, then refresh again.
+              </p>
+            )}
+          </div>
+        )
       )}
       {error && <p className="text-red-400 text-sm mt-3">{error}</p>}
     </div>
