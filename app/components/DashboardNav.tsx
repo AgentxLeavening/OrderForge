@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import NotificationBell from './NotificationBell'
 
 const LINKS = [
   { href: '/dashboard', label: 'Dashboard', hint: 'Order board and what needs attention' },
@@ -111,12 +112,15 @@ export default function DashboardNav() {
           )}
         </div>
 
-        <button
-          onClick={signOut}
-          className="text-gray-400 hover:text-white text-sm border border-gray-700 hover:border-gray-500 rounded-lg px-3 py-1.5 transition shrink-0"
-        >
-          Sign out
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <NotificationBell />
+          <button
+            onClick={signOut}
+            className="text-gray-400 hover:text-white text-sm border border-gray-700 hover:border-gray-500 rounded-lg px-3 py-1.5 transition"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
     </header>
   )
