@@ -1,9 +1,21 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
+import { billableLine, invoiceTotals } from './invoiceTotals'
+import { paymentMethodLabel } from './payments'
 
 type LineItem = {
   description: string
   quantity: number
   unit_price: number
+  // A shipping line the seller absorbed bills at zero — see billableLine.
+  item_type?: string | null
+  buyer_covered?: boolean | null
+}
+
+type InvoicePaymentLine = {
+  amount: number | string
+  kind?: string | null
+  method?: string | null
+  paid_at?: string | null
 }
 
 type InvoiceData = {
@@ -18,6 +30,8 @@ type InvoiceData = {
   lineItems: LineItem[]
   notes?: string
   taxRate?: number
+  /** Payments already taken against this order, so the invoice bills the balance. */
+  payments?: InvoicePaymentLine[]
 }
 
 export async function generateInvoicePdf(data: InvoiceData): Promise<Uint8Array> {
@@ -108,15 +122,14 @@ export async function generateInvoicePdf(data: InvoiceData): Promise<Uint8Array>
   y -= 28
 
   // Line items
-  let subtotal = 0
   for (const item of data.lineItems) {
-    const lineTotal = item.quantity * item.unit_price
-    subtotal += lineTotal
+    const lineTotal = billableLine(item)
+    const waived = item.item_type === 'shipping' && item.buyer_covered === false
 
     page.drawText(item.description, { x: 56, y, font: fontRegular, size: 11, color: BLACK, maxWidth: 280 })
     page.drawText(String(item.quantity), { x: 368, y, font: fontRegular, size: 11, color: BLACK })
-    page.drawText(`$${item.unit_price.toFixed(2)}`, { x: 410, y, font: fontRegular, size: 11, color: BLACK })
-    page.drawText(`$${lineTotal.toFixed(2)}`, { x: 524, y, font: fontRegular, size: 11, color: BLACK })
+    page.drawText(`$${Number(item.unit_price).toFixed(2)}`, { x: 410, y, font: fontRegular, size: 11, color: BLACK })
+    page.drawText(waived ? 'Included' : `$${lineTotal.toFixed(2)}`, { x: 524, y, font: fontRegular, size: 11, color: waived ? GRAY : BLACK })
 
     y -= 24
 
@@ -127,11 +140,19 @@ export async function generateInvoicePdf(data: InvoiceData): Promise<Uint8Array>
   y -= 20
 
   // Totals box
-  const taxAmount = subtotal * ((data.taxRate || 0) / 100)
-  const total = subtotal + taxAmount
+  const { subtotal, taxAmount, total, paid, balance, fullyPaid } = invoiceTotals(
+    data.lineItems, data.taxRate, data.payments || []
+  )
+  const payments = (data.payments || []).filter(p => Number(p.amount) > 0)
 
+  // The box grows with each payment line and the balance row, so a deposit
+  // never spills outside the shaded area.
   const totalsX = 390
-  page.drawRectangle({ x: totalsX - 12, y: y - 70, width: width - totalsX - 36, height: 90, color: LIGHT })
+  const extraRows = payments.length + (paid > 0 ? 1 : 0)
+  page.drawRectangle({
+    x: totalsX - 12, y: y - 70 - extraRows * 22,
+    width: width - totalsX - 36, height: 90 + extraRows * 22, color: LIGHT,
+  })
 
   page.drawText('Subtotal', { x: totalsX, y, font: fontRegular, size: 11, color: GRAY })
   page.drawText(`$${subtotal.toFixed(2)}`, { x: 524, y, font: fontRegular, size: 11, color: BLACK })
@@ -148,6 +169,28 @@ export async function generateInvoicePdf(data: InvoiceData): Promise<Uint8Array>
 
   page.drawText('Total', { x: totalsX, y, font: fontBold, size: 13, color: BLACK })
   page.drawText(`$${total.toFixed(2)}`, { x: 516, y, font: fontBold, size: 14, color: INDIGO })
+
+  // Payments already taken, then what's actually owed. Without this the
+  // customer is billed the full amount again after paying a deposit.
+  if (paid > 0) {
+    for (const payment of payments) {
+      y -= 22
+      const when = payment.paid_at ? new Date(`${String(payment.paid_at).slice(0, 10)}T00:00:00`).toLocaleDateString() : ''
+      const isRefund = payment.kind === 'refund'
+      const label = `${isRefund ? 'Refunded' : 'Paid'}${when ? ` ${when}` : ''}${payment.method ? ` · ${paymentMethodLabel(payment.method)}` : ''}`
+      page.drawText(label, { x: totalsX, y, font: fontRegular, size: 10, color: GRAY, maxWidth: 120 })
+      page.drawText(`${isRefund ? '+' : '−'}$${Number(payment.amount).toFixed(2)}`, { x: 516, y, font: fontRegular, size: 11, color: GRAY })
+    }
+
+    y -= 22
+    page.drawLine({ start: { x: totalsX, y: y + 12 }, end: { x: width - 48, y: y + 12 }, thickness: 0.5, color: rgb(0.8, 0.8, 0.9) })
+    page.drawText(fullyPaid ? 'Paid in full' : 'Balance due', { x: totalsX, y, font: fontBold, size: 13, color: BLACK })
+    page.drawText(`$${Math.max(0, balance).toFixed(2)}`, {
+      x: 516, y, font: fontBold, size: 14,
+      color: fullyPaid ? rgb(0.13, 0.55, 0.33) : INDIGO,
+    })
+    y -= extraRows * 4
+  }
 
   // Notes
   if (data.notes) {

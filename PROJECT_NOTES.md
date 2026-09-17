@@ -837,6 +837,26 @@ Reports card.
 - Not built: receipt photos, and mileage-rate maths (there's a `mileage`
   category, but it takes a dollar amount).
 
+## Invoices count payments (2026-09-17)
+The invoice PDF billed the full total regardless of what had been paid, so a
+customer who paid a 50% deposit got an invoice for the whole job with no
+mention of it — an easy way to be paid twice. Spotted by the user while
+testing the Stripe flow.
+- `lib/invoiceTotals.ts` (tests: `test/invoiceTotals.test.ts`) is now the one
+  place invoice maths lives: billable lines, tax, payments, balance.
+- The PDF lists each payment ("Paid 10 Sep · Venmo −$29.00", refunds as `+`)
+  and ends in **Balance due**, or **Paid in full** in green when nothing is
+  left. The totals box grows with the payment rows rather than overflowing.
+- `invoices.balance_due` finally means something: it stores the real remaining
+  balance instead of a copy of the total.
+- **Also fixed**: the PDF ignored `buyer_covered`, so a shipping line the
+  seller absorbed was still billed — the invoice could total more than the
+  order it came from. It now uses the same billable rule as the order page,
+  the quote snapshot and the payments card.
+- Refunds subtract, matching `netPaid`, and a penny of rounding tolerance
+  matches `BALANCE_TOLERANCE` — an invoice must never disagree with the order
+  page the seller is looking at.
+
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —
   **implemented 2026-09-14**, no longer a blocker for onboarding other users.
