@@ -834,8 +834,23 @@ Reports card.
   - The header shows a **monthly-equivalent run-rate**: quarterly and yearly
     amounts are divided across their cycle, so $120/year reads as $10/mo and
     commitments compare honestly.
-- Not built: receipt photos, and mileage-rate maths (there's a `mileage`
-  category, but it takes a dollar amount).
+- **Receipt photos — added 2026-09-17** (migration 035, first use of Supabase
+  Storage here). `expenses.receipt_path` + a **private** `receipts` bucket.
+  - **Private, signed-URL reads only** (5 min). A receipt carries a name, an
+    address and sometimes a card's last four; a public URL would keep working
+    forever for anyone who ever saw it.
+  - Objects live under `<user_id>/…` and the storage policies compare that
+    first path segment with `auth.uid()`, so a path the browser proposes can
+    never reach another seller's folder.
+  - The file input uses `capture="environment"`, so a phone opens the camera
+    straight away — the moment this is actually used is standing at a stall.
+  - Bucket caps: 10 MB, images + PDF only.
+  - Replacing or deleting an expense removes the old object; nothing else would
+    ever reference or clean it up.
+  - The tax export gained a **Receipt** column (yes/blank) — the question an
+    accountant asks about every deduction.
+- Not built: mileage-rate maths (there's a `mileage` category, but it takes a
+  dollar amount).
 
 ## Invoices count payments (2026-09-17)
 The invoice PDF billed the full total regardless of what had been paid, so a

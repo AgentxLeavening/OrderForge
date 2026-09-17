@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { EXPENSE_CATEGORIES, expenseCategoryLabel, totalExpenses, totalsByCategory } from '@/lib/expenses'
 import { buildRecurringRows, dueRecurring, monthlyCommitment, recurrenceLabel, RECURRENCE_OPTIONS } from '@/lib/recurring'
+import ExpenseReceipt from '@/app/components/ExpenseReceipt'
 
 type Expense = {
   id: string
@@ -17,6 +18,7 @@ type Expense = {
   order_id: string | null
   recurrence: string | null
   recurring_source_id: string | null
+  receipt_path: string | null
   orders?: { order_number: string } | null
 }
 
@@ -47,7 +49,7 @@ export default function ExpensesPage() {
     if (!user) { router.push('/login'); return }
     const { data, error: loadErr } = await supabase
       .from('expenses')
-      .select('id, incurred_on, amount, category, vendor, note, order_id, recurrence, recurring_source_id, orders(order_number)')
+      .select('id, incurred_on, amount, category, vendor, note, order_id, recurrence, recurring_source_id, receipt_path, orders(order_number)')
       .eq('user_id', user.id)
       .order('incurred_on', { ascending: false })
       .order('created_at', { ascending: false })
@@ -117,8 +119,11 @@ export default function ExpensesPage() {
   const removeExpense = async (expense: Expense) => {
     if (!confirm(`Delete this ${money(expense.amount)} expense?`)) return
     const { error: delErr } = await supabase.from('expenses').delete().eq('id', expense.id)
-    if (delErr) setError(delErr.message)
-    else setExpenses(prev => prev.filter(e => e.id !== expense.id))
+    if (delErr) { setError(delErr.message); return }
+    // Take the receipt with it — nothing would ever reference or clean up an
+    // orphaned file in the bucket.
+    if (expense.receipt_path) await supabase.storage.from('receipts').remove([expense.receipt_path])
+    setExpenses(prev => prev.filter(e => e.id !== expense.id))
   }
 
   const inputClass = 'bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500'
@@ -243,6 +248,11 @@ export default function ExpensesPage() {
                     <Link href={`/dashboard/orders/${e.order_id}`} className="text-indigo-400 hover:text-indigo-300 ml-2">{e.orders.order_number}</Link>
                   )}
                 </span>
+                <ExpenseReceipt
+                  expenseId={e.id}
+                  receiptPath={e.receipt_path}
+                  onChange={path => setExpenses(prev => prev.map(x => (x.id === e.id ? { ...x, receipt_path: path } : x)))}
+                />
                 <span className="text-white font-medium md:text-right">{money(e.amount)}</span>
                 <button onClick={() => removeExpense(e)} className="text-gray-600 hover:text-red-400 transition text-lg leading-none self-end md:self-auto" aria-label="Delete expense">×</button>
               </div>

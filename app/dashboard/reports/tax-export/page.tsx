@@ -13,6 +13,7 @@ type ExpenseRow = {
   category: string
   vendor: string | null
   note: string | null
+  receipt_path: string | null
   orders?: { order_number: string } | null
 }
 
@@ -88,7 +89,7 @@ export default function TaxExportPage() {
       // together would double-count a spool bought in March and used in June.
       const { data: expenseRows, error: expenseErr } = await supabase
         .from('expenses')
-        .select('incurred_on, amount, category, vendor, note, orders(order_number)')
+        .select('incurred_on, amount, category, vendor, note, receipt_path, orders(order_number)')
         .eq('user_id', user.id)
         .gte('incurred_on', startDate)
         .lte('incurred_on', endDate)
@@ -101,7 +102,9 @@ export default function TaxExportPage() {
       if (expenses.length > 0) {
         lines.push('')
         lines.push(['Expenses'].map(csvField).join(','))
-        lines.push(['Date', 'Category', 'Vendor', 'Note', 'Order', 'Amount'].map(csvField).join(','))
+        // "Receipt" tells an accountant which lines have documentation behind
+        // them — the question they ask about every deduction.
+        lines.push(['Date', 'Category', 'Vendor', 'Note', 'Order', 'Amount', 'Receipt'].map(csvField).join(','))
         for (const e of expenses) {
           lines.push([
             new Date(`${e.incurred_on}T00:00:00`).toLocaleDateString(),
@@ -110,6 +113,7 @@ export default function TaxExportPage() {
             e.note || '',
             e.orders?.order_number || '',
             (Number(e.amount) || 0).toFixed(2),
+            e.receipt_path ? 'yes' : '',
           ].map(csvField).join(','))
         }
 
