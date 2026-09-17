@@ -112,8 +112,12 @@ export default function NotificationBell() {
         )}
       </button>
 
+      {/* Anchoring the panel to the bell pushed it off the left edge of a
+          phone (the bell sits ~60px from the right, the panel is 320px wide).
+          On small screens it spans the viewport instead; from `sm` up it hangs
+          under the bell as before. */}
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-80 max-w-[calc(100vw-2rem)] bg-gray-900 border border-gray-700 rounded-2xl shadow-xl shadow-black/40 overflow-hidden">
+        <div className="fixed left-3 right-3 top-14 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-1 sm:w-80 z-50 bg-gray-900 border border-gray-700 rounded-2xl shadow-xl shadow-black/40 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800">
             <span className="text-white text-sm font-semibold">Activity</span>
             {unread.length > 0 && (
