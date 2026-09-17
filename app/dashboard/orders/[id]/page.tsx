@@ -9,6 +9,7 @@ import { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 import { computeOrderEconomics } from '@/lib/pricing'
 import OrderPayments from '@/app/components/OrderPayments'
 import OrderTime from '@/app/components/OrderTime'
+import { invoiceTotals } from '@/lib/invoiceTotals'
 
 
 type Order = {
@@ -402,10 +403,18 @@ const handleGenerateInvoice = async () => {
     : { data: null }
 
   const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`
-  const subtotal = lineItems.reduce((sum, item) => sum + billableAmount(item), 0)
   const taxRate = profile?.default_tax_rate || 0
-  const taxAmount = subtotal * (taxRate / 100)
-  const total = subtotal + taxAmount
+
+  // Payments already taken (a deposit, a part payment) are billed against, so
+  // the invoice asks for what's actually left rather than the whole job again.
+  const { data: paidRows } = await supabase
+    .from('order_payments')
+    .select('amount, kind, method, paid_at')
+    .eq('order_id', id)
+    .order('paid_at', { ascending: true })
+
+  const payments = paidRows || []
+  const { subtotal, taxAmount, total, balance } = invoiceTotals(lineItems, taxRate, payments)
 
   // Save invoice to Supabase
   await supabase.from('invoices').insert({
@@ -417,7 +426,7 @@ const handleGenerateInvoice = async () => {
     tax_rate: taxRate,
     tax_amount: taxAmount,
     total,
-    balance_due: total,
+    balance_due: Math.max(0, balance),
     due_date: dueDate || null,
     notes,
   })
@@ -447,6 +456,7 @@ const handleGenerateInvoice = async () => {
     lineItems,
     notes: notes || undefined,
     taxRate,
+    payments,
   })
 
   // Download it
