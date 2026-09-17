@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
-import { stripeClient, stripeConfigured, fromStripeAmount } from '@/lib/stripe'
+import { stripeClient, stripeConfigured, fromStripeAmount, readAccountStatus } from '@/lib/stripe'
 
 // POST /api/stripe/webhook — Stripe telling us a card payment completed.
 //
@@ -75,8 +75,24 @@ export async function POST(request: NextRequest) {
         if (event.account) await admin.from('stripe_accounts').delete().eq('stripe_account_id', event.account)
         break
       }
-      default:
+      default: {
+        // Accounts v2 reports account changes as `v2.core.account...` events
+        // rather than v1's `account.updated`, and their payload shape differs
+        // by API version. Rather than decode each one, take any v2 account
+        // event as "something changed" and re-read the authoritative state.
+        if (event.type.startsWith('v2.core.account') && event.account) {
+          const status = await readAccountStatus(event.account)
+          await admin
+            .from('stripe_accounts')
+            .update({
+              charges_enabled: status.chargesEnabled,
+              details_submitted: status.detailsSubmitted,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('stripe_account_id', event.account)
+        }
         break
+      }
     }
     return NextResponse.json({ received: true })
   } catch (e) {

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
-import { stripeClient, stripeConfigured, stripeTestMode } from '@/lib/stripe'
+import { stripeClient, stripeConfigured, stripeTestMode, v2CardPaymentsActive, v2RequestOptions } from '@/lib/stripe'
 
 // POST /api/stripe/connect — start or resume Stripe onboarding for the signed-in
 // seller, returning the hosted onboarding URL to send them to.
@@ -32,22 +32,28 @@ export async function POST() {
     let accountId = existing?.stripe_account_id
 
     if (!accountId) {
-      // Standard: the seller keeps their own Stripe dashboard, handles their
-      // own disputes and payouts, and OrderForge takes no application fee.
-      const account = await stripe.accounts.create({
-        type: 'standard',
-        email: user.email ?? undefined,
-        metadata: { orderforge_user_id: user.id },
-      })
-      accountId = account.id
+      // Accounts v2: the seller is a `merchant` configuration asking for the
+      // card_payments capability. `dashboard: 'full'` is the v1 "Standard"
+      // equivalent — they keep their own Stripe dashboard, handle their own
+      // disputes and payouts, and OrderForge takes no application fee.
+      const account = await stripe.v2.core.accounts.create(
+        {
+          contact_email: user.email ?? undefined,
+          configuration: { merchant: { capabilities: { card_payments: { requested: true } } } },
+          dashboard: 'full',
+          include: ['configuration.merchant'],
+          metadata: { orderforge_user_id: user.id },
+        } as never,
+        v2RequestOptions
+      )
+      accountId = (account as { id: string }).id
       const { error: insErr } = await admin.from('stripe_accounts').insert({
         user_id: user.id,
-        stripe_account_id: account.id,
-        charges_enabled: account.charges_enabled ?? false,
-        details_submitted: account.details_submitted ?? false,
-        // Derived from the configured key rather than the Account object:
-        // a test key can only ever create test accounts, and Stripe's types
-        // don't surface livemode here.
+        stripe_account_id: accountId,
+        charges_enabled: v2CardPaymentsActive(account),
+        details_submitted: false,
+        // Derived from the configured key rather than the account object:
+        // a test key can only ever create test accounts.
         livemode: !stripeTestMode(),
       })
       if (insErr) throw new Error(insErr.message)
@@ -55,14 +61,24 @@ export async function POST() {
 
     // Account links are single-use and short-lived; `refresh_url` is where
     // Stripe sends the seller if the link goes stale, which just starts again.
-    const link = await stripe.accountLinks.create({
-      account: accountId,
-      refresh_url: `${appUrl}/api/stripe/connect/refresh`,
-      return_url: `${appUrl}/api/stripe/connect/return`,
-      type: 'account_onboarding',
-    })
+    // `configurations: ['merchant']` must match what the account was created
+    // with, or Stripe refuses the link.
+    const link = await stripe.v2.core.accountLinks.create(
+      {
+        account: accountId,
+        use_case: {
+          type: 'account_onboarding',
+          account_onboarding: {
+            configurations: ['merchant'],
+            refresh_url: `${appUrl}/api/stripe/connect/refresh`,
+            return_url: `${appUrl}/api/stripe/connect/return`,
+          },
+        },
+      } as never,
+      v2RequestOptions
+    )
 
-    return NextResponse.json({ url: link.url })
+    return NextResponse.json({ url: (link as { url: string }).url })
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     console.error('[stripe] connect failed', message)
