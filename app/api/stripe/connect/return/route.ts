@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
-import { stripeClient, stripeConfigured, stripeTestMode } from '@/lib/stripe'
+import { readAccountStatus, stripeConfigured, stripeTestMode } from '@/lib/stripe'
 
 // GET /api/stripe/connect/return — where Stripe sends the seller after hosted
 // onboarding. Returning here means "they finished the form", NOT "they can take
@@ -27,18 +27,20 @@ export async function GET() {
   if (!row) return settings('error')
 
   try {
-    const account = await stripeClient().accounts.retrieve(row.stripe_account_id)
+    // Returning here means the seller finished the form, NOT that they can take
+    // money: Stripe may still be verifying. Read the real state back.
+    const status = await readAccountStatus(row.stripe_account_id)
     await admin
       .from('stripe_accounts')
       .update({
-        charges_enabled: account.charges_enabled ?? false,
-        details_submitted: account.details_submitted ?? false,
+        charges_enabled: status.chargesEnabled,
+        details_submitted: status.detailsSubmitted,
         livemode: !stripeTestMode(),
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', user.id)
 
-    return settings(account.charges_enabled ? 'connected' : 'pending')
+    return settings(status.chargesEnabled ? 'connected' : 'pending')
   } catch (e) {
     console.error('[stripe] return failed', e instanceof Error ? e.message : e)
     return settings('error')

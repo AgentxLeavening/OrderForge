@@ -703,6 +703,37 @@ mode first** at the user's direction; live mode needs the platform setup below.
 - **Env needed**: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`. Without them the
   routes return 503 and the UI says card payments aren't set up — nothing
   breaks for sellers who don't use Stripe.
+- **Verified end to end in test mode 2026-09-17**: a $30 card payment recorded
+  itself (`method: 'card'`, `external_reference: cs_test_…`) with no manual
+  step — the first self-recording payment in the app, and proof the webhook is
+  scoped to connected accounts.
+
+### Accounts v2 migration (2026-09-17)
+Stripe refused `accounts.create` mid-setup: new Connect integrations must use
+`/v2/core/accounts`, with v1 available only behind a dashboard compatibility
+flag (which the user switched on to finish the test run, and can switch off
+once v2 is verified).
+- Accounts are now created as a **`merchant` configuration** requesting the
+  `card_payments` capability, `dashboard: 'full'` (the v1 "Standard"
+  equivalent), and onboarding uses **Account Links v2**, whose
+  `configurations` must match the account's or Stripe refuses the link.
+- **"Can they charge?" moved**: v1's flat `charges_enabled` became
+  `configuration.merchant.capabilities.card_payments.status === 'active'`
+  (`pending` = Stripe still checking). `v2CardPaymentsActive` in `lib/stripe.ts`.
+- **`readAccountStatus` reads v2 first and falls back to v1**, because accounts
+  created before this migration (including the verified test one) are still v1
+  — both shapes exist in the wild, so both are handled rather than migrating
+  rows and hoping.
+- v2 endpoints need a **pinned dated API version**
+  (`STRIPE_V2_API_VERSION = '2026-08-26.dahlia'`), passed per request so
+  Checkout and webhook construction keep the SDK default.
+- The webhook now treats **any `v2.core.account*` event** as "something
+  changed" and re-reads the authoritative state, rather than decoding payload
+  shapes that vary by API version. v1 `account.updated` still handled.
+- **Refresh status** button + `/api/stripe/status` (2026-09-17): pulls live
+  state and reports Stripe's own outstanding requirements. Added because a
+  webhook not scoped to connected accounts leaves a cleared seller stuck on
+  "Finishing setup" with no explanation — which happened during setup.
 
 ## Estimated vs actual time (2026-09-15)
 Second of the four Craftybase differentiators. For commission work labour is
