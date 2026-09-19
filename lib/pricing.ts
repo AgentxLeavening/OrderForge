@@ -4,6 +4,48 @@
 // duplicating this formula in two places let them drift: the first pass
 // added buyer-covered shipping to revenue without also costing it, which
 // silently counted shipping as pure profit on every imported order.
+/**
+ * Marketplace fees differ enough per channel that one number can't serve all
+ * three — eBay's cut is roughly double Shopify's. Falls back to the general
+ * default (used for manual orders), then to nothing.
+ */
+export function channelFeePct(
+  profile: {
+    fee_pct_etsy?: number | null
+    fee_pct_ebay?: number | null
+    fee_pct_shopify?: number | null
+    default_fee_pct?: number | null
+  } | null | undefined,
+  channel: string | null | undefined
+): number | null {
+  if (!profile) return null
+  const perChannel = channel === 'etsy' ? profile.fee_pct_etsy
+    : channel === 'ebay' ? profile.fee_pct_ebay
+    : channel === 'shopify' ? profile.fee_pct_shopify
+    : null
+  const value = perChannel ?? profile.default_fee_pct
+  return value == null ? null : Number(value)
+}
+
+/**
+ * Three states, not two. An unrecorded cost is a different claim from a cost of
+ * zero, and conflating them is what made imported orders read as pure profit.
+ *
+ * 'unknown' still counts as full profit in the totals — an undocumented cost
+ * can't be deducted for tax anyway, so that's the safe direction — but it's
+ * flagged so a seller can see how much of the figure is unverified.
+ */
+export type CostState = 'recorded' | 'none' | 'unknown'
+
+export function costState(order: {
+  material_cost?: number | null
+  labor_cost?: number | null
+  no_cost_basis?: boolean | null
+}): CostState {
+  if (order.material_cost != null || order.labor_cost != null) return 'recorded'
+  return order.no_cost_basis ? 'none' : 'unknown'
+}
+
 export type PricingInputs = {
   suggested_price?: number | null
   material_cost?: number | null

@@ -1,4 +1,5 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
+import { channelFeePct } from '@/lib/pricing'
 import type { MarketplaceProvider, NormalizedOrder } from './types'
 
 // Deducts a product's BOM for one auto-matched marketplace order — mirrors
@@ -187,6 +188,17 @@ async function importOrders(
     // whitespace-insensitive) — a starting point the seller can always
     // override on the order detail page, never touched again after insert
     // (see the update path below, which deliberately leaves product_id alone).
+    // The seller's fee for THIS channel, stamped on each import so profit
+    // isn't just the sale price. Read once per sync, applied only at insert —
+    // a later change to the default must not silently rewrite the economics of
+    // orders already imported and reported on.
+    const { data: feeProfile } = await admin
+      .from('profiles')
+      .select('fee_pct_etsy, fee_pct_ebay, fee_pct_shopify, default_fee_pct')
+      .eq('id', userId)
+      .maybeSingle()
+    const feePct = channelFeePct(feeProfile, provider.id)
+
     const { data: products } = await admin.from('products').select('id, name').eq('user_id', userId)
     const productIdByName = new Map((products || []).map(p => [String(p.name).trim().toLowerCase(), p.id]))
 
@@ -291,6 +303,7 @@ async function importOrders(
             created_at: o.createdAt,
             product_id: matchedProductId,
             tracking_number: trackingNumber,
+            fee_pct: feePct,
           })
           .select('id')
           .single()
