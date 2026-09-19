@@ -872,6 +872,33 @@ testing the Stripe flow.
   matches `BALANCE_TOLERANCE` — an invoice must never disagree with the order
   page the seller is looking at.
 
+## Profit on imported orders (2026-09-18)
+The first outside tester (a friend of the user's, eBay-only) reported profit
+was wrong. It was: an imported order carried a sale price and **nothing else**
+— no marketplace fee, no cost of goods — so profit came out as roughly the
+full sale price. Migration 037, logic in `lib/pricing.ts`
+(`channelFeePct`, `costState`), tests in `test/pricingCosts.test.ts`.
+
+- **Per-channel fees** (`profiles.fee_pct_etsy/ebay/shopify`) — one default
+  can't serve all three, since eBay's cut is roughly double Shopify's.
+  `sync.ts` stamps the channel's fee on each order **at insert only**: changing
+  a setting must never rewrite the economics of orders already reported on.
+  Settings has a backfill button for existing imports, which likewise only
+  fills orders with no fee recorded.
+- **Cost of goods has THREE states**, and conflating the last two is what made
+  the numbers dishonest:
+  - `material_cost` set → recorded.
+  - `material_cost` null → **unknown**: counted as full profit (an undocumented
+    cost can't be deducted for tax anyway, so that's the safe direction) but
+    **flagged** on the order and counted on the dashboard ("N orders with no
+    cost recorded ($X of sales)").
+  - `orders.no_cost_basis` true → deliberately free (gifted, found, already
+    owned). Same maths, no flag.
+- The Pricing & Margin card now renders for imported orders too — hiding it
+  there is what left marketplace profit unexplained — and carries an editable
+  **Cost of goods** field plus the free-goods checkbox. A blank field stays
+  NULL rather than becoming 0.
+
 ## Known debt / follow-ups
 - ~~eBay account deletion notifications acknowledged but not acted on~~ —
   **implemented 2026-09-14**, no longer a blocker for onboarding other users.

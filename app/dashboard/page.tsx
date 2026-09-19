@@ -7,7 +7,7 @@ import NewOrderModal, { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 import DashboardWidget from '@/app/components/DashboardWidget'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import { isLowStock, unitShort } from '@/lib/inventory'
-import { computeOrderEconomics } from '@/lib/pricing'
+import { computeOrderEconomics, costState } from '@/lib/pricing'
 import { amountDue, isOwed, summarizePayments, type BillableLine, type PaymentRecord, type PaymentSummary } from '@/lib/payments'
 import { daysUntilDue, dueLabel, groupByDue } from '@/lib/schedule'
 import Link from 'next/link'
@@ -59,6 +59,7 @@ type Order = {
   estimated_shipping?: number | null
   shipping_buyer_covered?: boolean
   external_source?: string | null
+  no_cost_basis?: boolean | null
   clients?: {
     name: string
     id?: string
@@ -391,6 +392,11 @@ export default function DashboardPage() {
     })
     .filter((e): e is NonNullable<typeof e> => e !== null)
 
+  // Orders whose profit is really just their sale price, because nobody has
+  // recorded what the goods cost. Marking an order explicitly free clears it.
+  const uncostedOrders = pricedOrders.filter(e => costState(e.order) === 'unknown')
+  const uncostedRevenue = uncostedOrders.reduce((s, e) => s + e.price, 0)
+
   const totalRevenue = pricedOrders.reduce((s, e) => s + e.price, 0)
   const totalProfit = pricedOrders.reduce((s, e) => s + e.profit, 0)
   const avgMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0
@@ -465,6 +471,15 @@ export default function DashboardPage() {
       {pricedOrders.length === 0 && (
         <p className="text-gray-500 text-xs -mt-2">
           Profit figures cover orders with a saved price breakdown. Create orders from a product template to populate them.
+        </p>
+      )}
+      {/* How much of that profit figure is actually unverified. Imported
+          orders arrive with no cost of goods, so counting the whole sale as
+          profit silently overstates it — say so instead of hiding it. */}
+      {uncostedOrders.length > 0 && (
+        <p className="text-amber-300/80 text-xs -mt-2">
+          {uncostedOrders.length} order{uncostedOrders.length === 1 ? '' : 's'} with no cost recorded
+          {' '}(${uncostedRevenue.toFixed(2)} of sales) — counted as all profit until you add what the goods cost.
         </p>
       )}
 

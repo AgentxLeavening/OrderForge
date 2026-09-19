@@ -46,6 +46,11 @@ export default function SettingsPage() {
   const [taxRate, setTaxRate] = useState('')
   const [venmoUsername, setVenmoUsername] = useState('')
   const [venmoError, setVenmoError] = useState('')
+  const [feeEtsy, setFeeEtsy] = useState('')
+  const [feeEbay, setFeeEbay] = useState('')
+  const [feeShopify, setFeeShopify] = useState('')
+  const [backfilling, setBackfilling] = useState(false)
+  const [backfillResult, setBackfillResult] = useState('')
   const [paypalName, setPaypalName] = useState('')
   const [paypalError, setPaypalError] = useState('')
 
@@ -76,10 +81,13 @@ export default function SettingsPage() {
       if (!user) { setLoading(false); return }
       const { data } = await supabase
         .from('profiles')
-        .select('business_name, hourly_rate, default_markup, default_fee_pct, default_tax_rate, venmo_username, paypal_me_name')
+        .select('business_name, hourly_rate, default_markup, default_fee_pct, default_tax_rate, venmo_username, paypal_me_name, fee_pct_etsy, fee_pct_ebay, fee_pct_shopify')
         .eq('id', user.id)
         .single()
       if (data) {
+        setFeeEtsy(data.fee_pct_etsy ?? '')
+        setFeeEbay(data.fee_pct_ebay ?? '')
+        setFeeShopify(data.fee_pct_shopify ?? '')
         setVenmoUsername(data.venmo_username || '')
         setPaypalName(data.paypal_me_name || '')
         setBusinessName(data.business_name || '')
@@ -136,6 +144,34 @@ export default function SettingsPage() {
     await loadConnections()
   }
 
+  // Fills the channel fee into imported orders that have none. Deliberately
+  // never overwrites an existing fee: an order already reported on shouldn't
+  // have its economics rewritten by a settings change.
+  const backfillFees = async () => {
+    setBackfilling(true)
+    setBackfillResult('')
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setBackfilling(false); return }
+
+    const fees: Record<string, string> = { etsy: String(feeEtsy), ebay: String(feeEbay), shopify: String(feeShopify) }
+    let updated = 0
+    for (const [channel, value] of Object.entries(fees)) {
+      const pct = value.trim() === '' ? null : Number(value)
+      if (pct == null || !Number.isFinite(pct)) continue
+      const { data, error } = await supabase
+        .from('orders')
+        .update({ fee_pct: pct })
+        .eq('user_id', user.id)
+        .eq('external_source', channel)
+        .is('fee_pct', null)
+        .select('id')
+      if (error) { setBackfillResult(error.message); setBackfilling(false); return }
+      updated += (data || []).length
+    }
+    setBackfillResult(updated === 0 ? 'Nothing to update — every imported order already has a fee.' : `Updated ${updated} order${updated === 1 ? '' : 's'}.`)
+    setBackfilling(false)
+  }
+
   const save = async () => {
     // Validate before saving anything, so a typo'd handle can't silently blank
     // the pay button on every quote.
@@ -163,6 +199,9 @@ export default function SettingsPage() {
         default_tax_rate: num(taxRate),
         venmo_username: venmo,
         paypal_me_name: paypal,
+        fee_pct_etsy: num(String(feeEtsy)),
+        fee_pct_ebay: num(String(feeEbay)),
+        fee_pct_shopify: num(String(feeShopify)),
       })
       .eq('id', user.id)
     if (error) console.warn('Failed saving settings', error)
@@ -201,7 +240,7 @@ export default function SettingsPage() {
                   <input value={markup} onChange={e => setMarkup(e.target.value)} type="number" step="0.05" className={inputClass} placeholder="e.g. 1.5" />
                 </div>
                 <div>
-                  <label className={labelClass}>Marketplace fee (%)</label>
+                  <label className={labelClass}>Marketplace fee (%) <span className="text-gray-600">default</span></label>
                   <input value={feePct} onChange={e => setFeePct(e.target.value)} type="number" step="0.1" className={inputClass} placeholder="e.g. 8" />
                 </div>
                 <div>
@@ -209,6 +248,44 @@ export default function SettingsPage() {
                   <input value={taxRate} onChange={e => setTaxRate(e.target.value)} type="number" step="0.1" className={inputClass} placeholder="e.g. 7" />
                 </div>
               </div>
+            </div>
+
+            <div>
+              <h2 className="text-white font-semibold mb-1">Marketplace fees</h2>
+              <p className="text-gray-500 text-xs mb-4">
+                Each marketplace takes a different cut, so profit on an imported order is only right once these are set.
+                Applied to new imports automatically. Leave blank to use the default above.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className={labelClass}>Etsy (%)</label>
+                  <input value={feeEtsy} onChange={e => setFeeEtsy(e.target.value)} type="number" step="0.1" className={inputClass} placeholder="e.g. 6.5" />
+                </div>
+                <div>
+                  <label className={labelClass}>eBay (%)</label>
+                  <input value={feeEbay} onChange={e => setFeeEbay(e.target.value)} type="number" step="0.1" className={inputClass} placeholder="e.g. 13.25" />
+                </div>
+                <div>
+                  <label className={labelClass}>Shopify (%)</label>
+                  <input value={feeShopify} onChange={e => setFeeShopify(e.target.value)} type="number" step="0.1" className={inputClass} placeholder="e.g. 2.9" />
+                </div>
+              </div>
+              <p className="text-gray-600 text-xs mt-2">
+                Check your own statements — fees vary by category, store subscription and country. These are only starting points.
+              </p>
+              <div className="flex flex-wrap items-center gap-3 mt-3">
+                <button
+                  onClick={backfillFees}
+                  disabled={backfilling}
+                  className="text-sm bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-lg transition disabled:opacity-50"
+                >
+                  {backfilling ? 'Applying…' : 'Apply to existing imported orders'}
+                </button>
+                {backfillResult && <span className="text-gray-400 text-xs">{backfillResult}</span>}
+              </div>
+              <p className="text-gray-600 text-xs mt-1">
+                Only fills in orders that have no fee recorded — it never overwrites one you&apos;ve set.
+              </p>
             </div>
 
             <div>

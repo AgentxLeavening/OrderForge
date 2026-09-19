@@ -6,7 +6,7 @@ import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { generateInvoicePdf } from '@/lib/generateInvoicePdf'
 import { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
-import { computeOrderEconomics } from '@/lib/pricing'
+import { computeOrderEconomics, costState } from '@/lib/pricing'
 import OrderPayments from '@/app/components/OrderPayments'
 import OrderTime from '@/app/components/OrderTime'
 import { invoiceTotals } from '@/lib/invoiceTotals'
@@ -35,6 +35,7 @@ type Order = {
   product_id: string | null
   external_source: string | null
   estimated_hours: number | null
+  no_cost_basis: boolean | null
 }
 
 type LineItem = {
@@ -125,6 +126,8 @@ export default function OrderDetailPage() {
   const [depositEnabled, setDepositEnabled] = useState(false)
   const [quoteMessage, setQuoteMessage] = useState('')
   const [quoteValidUntil, setQuoteValidUntil] = useState('')
+  const [materialCost, setMaterialCost] = useState('')
+  const [noCostBasis, setNoCostBasis] = useState(false)
   const [estimatedShipping, setEstimatedShipping] = useState('')
   const [shippingBuyerCovered, setShippingBuyerCovered] = useState(true)
   const [trackingNumber, setTrackingNumber] = useState('')
@@ -186,6 +189,8 @@ export default function OrderDetailPage() {
       setBuyerName(orderData.buyer_name || '')
       setDueDate(orderData.due_date || '')
       setNotes(orderData.notes || '')
+      setMaterialCost(orderData.material_cost == null ? '' : String(orderData.material_cost))
+      setNoCostBasis(!!orderData.no_cost_basis)
       setEstimatedShipping(orderData.estimated_shipping == null ? '' : String(orderData.estimated_shipping))
       setShippingBuyerCovered(orderData.shipping_buyer_covered !== false)
       setTrackingNumber(orderData.tracking_number || '')
@@ -231,6 +236,10 @@ export default function OrderDetailPage() {
         estimated_shipping: estimatedShipping.trim() === '' ? null : Number(estimatedShipping),
         shipping_buyer_covered: shippingBuyerCovered,
         tracking_number: trackingNumber.trim() || null,
+        // Blank stays NULL rather than becoming 0 — "we don't know" and "it was
+        // free" are different claims, and only the checkbox makes the second.
+        material_cost: materialCost.trim() === '' ? null : Number(materialCost),
+        no_cost_basis: noCostBasis,
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -631,7 +640,9 @@ const handleGenerateInvoice = async () => {
           </div>
         </div>
 
-        {/* Pricing & Margin (internal — from the suggested price basis) */}
+        {/* Pricing & Margin (internal — from the suggested price basis).
+            Also shown for imported orders, which have a price but no costs:
+            hiding it there is what left marketplace profit unexplained. */}
         {order && (order.suggested_price != null || order.material_cost != null) && (() => {
           // Live-edited shipping fields, not the persisted order.* values —
           // this card previews the effect of unsaved changes to those two
@@ -665,10 +676,46 @@ const handleGenerateInvoice = async () => {
                   <span className="text-gray-300">Est. profit</span>
                   <span className={profit >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>${profit.toFixed(2)} ({marginPct.toFixed(0)}%)</span>
                 </div>
+                {/* Say so rather than letting a full-price "profit" pass for a
+                    real one. An undocumented cost still counts as profit (the
+                    tax-safe direction), but the seller should know it's
+                    unverified. */}
+                {costState(order) === 'unknown' && (
+                  <p className="text-amber-300/80 text-xs pt-1.5">
+                    No cost recorded — this counts the whole sale as profit. Add what the goods cost below, or mark it as free.
+                  </p>
+                )}
+                {costState(order) === 'none' && (
+                  <p className="text-gray-500 text-xs pt-1.5">Marked as costing nothing, so the whole sale is profit.</p>
+                )}
               </div>
 
               <div className="mt-5 pt-4 border-t border-gray-800 max-w-md">
-                <label className="text-sm text-gray-400 mb-1 block">Estimated shipping ($)</label>
+                <label className="text-sm text-gray-400 mb-1 block">
+                  Cost of goods ($) <span className="text-gray-600">what you paid for what you sold</span>
+                </label>
+                <input
+                  value={materialCost}
+                  onChange={e => setMaterialCost(e.target.value)}
+                  type="number"
+                  step="0.01"
+                  placeholder={order.material_cost == null ? 'Not recorded' : '0.00'}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                />
+                <label className="flex items-center gap-2 mt-2 text-sm text-gray-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={noCostBasis}
+                    onChange={e => { setNoCostBasis(e.target.checked); if (e.target.checked) setMaterialCost('') }}
+                    className="accent-indigo-500"
+                  />
+                  These goods cost me nothing
+                </label>
+                <p className="text-gray-600 text-xs mt-1">
+                  For resale, this is what you paid for the item. Leave blank if you genuinely don&apos;t know — it stays flagged rather than pretending the cost was zero.
+                </p>
+
+                <label className="text-sm text-gray-400 mb-1 block mt-4">Estimated shipping ($)</label>
                 <input
                   value={estimatedShipping}
                   onChange={e => setEstimatedShipping(e.target.value)}
