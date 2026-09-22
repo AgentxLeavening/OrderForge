@@ -1,5 +1,5 @@
 import { createSupabaseAdminClient } from '@/lib/supabase/admin'
-import { channelFeePct } from '@/lib/pricing'
+import { channelFeeFixed, channelFeePct } from '@/lib/pricing'
 import type { MarketplaceProvider, NormalizedOrder } from './types'
 
 // Deducts a product's BOM for one auto-matched marketplace order — mirrors
@@ -194,10 +194,11 @@ async function importOrders(
     // orders already imported and reported on.
     const { data: feeProfile } = await admin
       .from('profiles')
-      .select('fee_pct_etsy, fee_pct_ebay, fee_pct_shopify, default_fee_pct')
+      .select('fee_pct_etsy, fee_pct_ebay, fee_pct_shopify, default_fee_pct, fee_fixed_etsy, fee_fixed_ebay, fee_fixed_shopify, default_fee_fixed')
       .eq('id', userId)
       .maybeSingle()
     const feePct = channelFeePct(feeProfile, provider.id)
+    const feeFixed = channelFeeFixed(feeProfile, provider.id)
 
     const { data: products } = await admin.from('products').select('id, name').eq('user_id', userId)
     const productIdByName = new Map((products || []).map(p => [String(p.name).trim().toLowerCase(), p.id]))
@@ -304,6 +305,7 @@ async function importOrders(
             product_id: matchedProductId,
             tracking_number: trackingNumber,
             fee_pct: feePct,
+            fee_fixed: feeFixed,
           })
           .select('id')
           .single()

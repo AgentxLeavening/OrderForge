@@ -48,7 +48,7 @@ export default function TaxExportPage() {
 
       const { data: orders, error: fetchErr } = await supabase
         .from('orders')
-        .select('order_number, created_at, sales_channel, buyer_name, suggested_price, material_cost, labor_cost, estimated_shipping, shipping_buyer_covered, fee_pct, status')
+        .select('order_number, created_at, sales_channel, buyer_name, suggested_price, material_cost, labor_cost, estimated_shipping, shipping_buyer_covered, fee_pct, fee_fixed, status')
         .eq('user_id', user.id)
         .neq('status', 'cancelled')
         .gte('created_at', startDate)

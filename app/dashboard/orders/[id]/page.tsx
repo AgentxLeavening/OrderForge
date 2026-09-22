@@ -29,6 +29,7 @@ type Order = {
   labor_cost: number | null
   markup: number | null
   fee_pct: number | null
+  fee_fixed: number | null
   estimated_shipping: number | null
   shipping_buyer_covered: boolean
   tracking_number: string | null
@@ -654,6 +655,7 @@ const handleGenerateInvoice = async () => {
             estimated_shipping: Number(estimatedShipping) || 0,
             shipping_buyer_covered: shippingBuyerCovered,
             fee_pct: order.fee_pct,
+            fee_fixed: order.fee_fixed,
           })
           return (
             <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
@@ -666,7 +668,16 @@ const handleGenerateInvoice = async () => {
                 )}
                 <div className="flex justify-between text-sm text-gray-400 border-t border-gray-800 pt-1.5"><span>Cost</span><span>${cost.toFixed(2)}</span></div>
                 {order.markup != null && <div className="flex justify-between text-sm text-gray-500"><span>Markup</span><span>×{Number(order.markup)}</span></div>}
-                {order.fee_pct != null && <div className="flex justify-between text-sm text-gray-500"><span>Marketplace fee ({Number(order.fee_pct)}%)</span><span>−${feeAmt.toFixed(2)}</span></div>}
+                {(order.fee_pct != null || order.fee_fixed != null) && (
+                  <div className="flex justify-between text-sm text-gray-500">
+                    <span>
+                      Marketplace fee
+                      {order.fee_pct != null ? ` (${Number(order.fee_pct)}%` : ' ('}
+                      {order.fee_fixed != null ? `${order.fee_pct != null ? ' + ' : ''}$${Number(order.fee_fixed).toFixed(2)}/order` : ''})
+                    </span>
+                    <span>−${feeAmt.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm text-gray-300 border-t border-gray-800 pt-1.5"><span>Suggested price</span><span className="text-white">${price.toFixed(2)}</span></div>
                 {shippingBuyerCovered && shipping > 0 && (
                   <div className="flex justify-between text-sm text-gray-300"><span>+ Shipping (buyer paying)</span><span>${shipping.toFixed(2)}</span></div>
@@ -870,6 +881,7 @@ const handleGenerateInvoice = async () => {
                 estimated_shipping: Number(estimatedShipping) || 0,
                 shipping_buyer_covered: shippingBuyerCovered,
                 fee_pct: order.fee_pct,
+                fee_fixed: order.fee_fixed,
               })
               return e.revenue > 0 ? { revenue: e.revenue, material: e.material, shipping: e.shipping, feeAmt: e.feeAmt } : null
             })()}

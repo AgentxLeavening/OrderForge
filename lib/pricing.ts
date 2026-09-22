@@ -46,6 +46,28 @@ export function costState(order: {
   return order.no_cost_basis ? 'none' : 'unknown'
 }
 
+/**
+ * The flat per-order fee a marketplace charges on top of its percentage
+ * (eBay's is around $0.40). Same fallback chain as channelFeePct.
+ */
+export function channelFeeFixed(
+  profile: {
+    fee_fixed_etsy?: number | null
+    fee_fixed_ebay?: number | null
+    fee_fixed_shopify?: number | null
+    default_fee_fixed?: number | null
+  } | null | undefined,
+  channel: string | null | undefined
+): number | null {
+  if (!profile) return null
+  const perChannel = channel === 'etsy' ? profile.fee_fixed_etsy
+    : channel === 'ebay' ? profile.fee_fixed_ebay
+    : channel === 'shopify' ? profile.fee_fixed_shopify
+    : null
+  const value = perChannel ?? profile.default_fee_fixed
+  return value == null ? null : Number(value)
+}
+
 export type PricingInputs = {
   suggested_price?: number | null
   material_cost?: number | null
@@ -53,6 +75,8 @@ export type PricingInputs = {
   estimated_shipping?: number | null
   shipping_buyer_covered?: boolean | null
   fee_pct?: number | null
+  /** Flat per-order marketplace fee, charged whatever the order is worth. */
+  fee_fixed?: number | null
 }
 
 export type OrderEconomics = {
@@ -82,7 +106,10 @@ export function computeOrderEconomics(input: PricingInputs): OrderEconomics {
 
   const cost = material + labor + shipping
   const revenue = price + (buyerCoversShipping ? shipping : 0)
-  const feeAmt = revenue * (Number(input.fee_pct) || 0) / 100
+  // Percentage plus the marketplace's flat per-order charge. On a $1 card the
+  // flat part dwarfs the percentage, which is exactly where a percentage-only
+  // model overstated profit.
+  const feeAmt = revenue * (Number(input.fee_pct) || 0) / 100 + (Number(input.fee_fixed) || 0)
   const profit = revenue - cost - feeAmt
   const marginPct = revenue > 0 ? (profit / revenue) * 100 : 0
 
