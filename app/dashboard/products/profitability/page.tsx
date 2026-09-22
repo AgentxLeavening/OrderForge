@@ -16,6 +16,7 @@ type OrderRow = {
   estimated_shipping: number | null
   shipping_buyer_covered: boolean
   fee_pct: number | null
+  fee_fixed: number | null
   status: string
   products: { name: string }[] | { name: string } | null
 }
@@ -51,7 +52,7 @@ export default function ProfitabilityPage() {
 
       const { data: orders } = await supabase
         .from('orders')
-        .select('id, product_id, sales_channel, suggested_price, material_cost, labor_cost, estimated_shipping, shipping_buyer_covered, fee_pct, status, products(name)')
+        .select('id, product_id, sales_channel, suggested_price, material_cost, labor_cost, estimated_shipping, shipping_buyer_covered, fee_pct, fee_fixed, status, products(name)')
         .eq('user_id', user.id)
         .neq('status', 'cancelled')
 

@@ -56,6 +56,7 @@ type Order = {
   material_cost?: number | null
   labor_cost?: number | null
   fee_pct?: number | null
+  fee_fixed?: number | null
   estimated_shipping?: number | null
   shipping_buyer_covered?: boolean
   external_source?: string | null

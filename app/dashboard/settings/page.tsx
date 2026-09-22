@@ -49,6 +49,9 @@ export default function SettingsPage() {
   const [feeEtsy, setFeeEtsy] = useState('')
   const [feeEbay, setFeeEbay] = useState('')
   const [feeShopify, setFeeShopify] = useState('')
+  const [feeFixedEtsy, setFeeFixedEtsy] = useState('')
+  const [feeFixedEbay, setFeeFixedEbay] = useState('')
+  const [feeFixedShopify, setFeeFixedShopify] = useState('')
   const [backfilling, setBackfilling] = useState(false)
   const [backfillResult, setBackfillResult] = useState('')
   const [paypalName, setPaypalName] = useState('')
@@ -81,13 +84,16 @@ export default function SettingsPage() {
       if (!user) { setLoading(false); return }
       const { data } = await supabase
         .from('profiles')
-        .select('business_name, hourly_rate, default_markup, default_fee_pct, default_tax_rate, venmo_username, paypal_me_name, fee_pct_etsy, fee_pct_ebay, fee_pct_shopify')
+        .select('business_name, hourly_rate, default_markup, default_fee_pct, default_tax_rate, venmo_username, paypal_me_name, fee_pct_etsy, fee_pct_ebay, fee_pct_shopify, fee_fixed_etsy, fee_fixed_ebay, fee_fixed_shopify')
         .eq('id', user.id)
         .single()
       if (data) {
         setFeeEtsy(data.fee_pct_etsy ?? '')
         setFeeEbay(data.fee_pct_ebay ?? '')
         setFeeShopify(data.fee_pct_shopify ?? '')
+        setFeeFixedEtsy(data.fee_fixed_etsy ?? '')
+        setFeeFixedEbay(data.fee_fixed_ebay ?? '')
+        setFeeFixedShopify(data.fee_fixed_shopify ?? '')
         setVenmoUsername(data.venmo_username || '')
         setPaypalName(data.paypal_me_name || '')
         setBusinessName(data.business_name || '')
@@ -153,20 +159,36 @@ export default function SettingsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setBackfilling(false); return }
 
-    const fees: Record<string, string> = { etsy: String(feeEtsy), ebay: String(feeEbay), shopify: String(feeShopify) }
+    const fees: Record<string, { pct: string; fixed: string }> = {
+      etsy: { pct: String(feeEtsy), fixed: String(feeFixedEtsy) },
+      ebay: { pct: String(feeEbay), fixed: String(feeFixedEbay) },
+      shopify: { pct: String(feeShopify), fixed: String(feeFixedShopify) },
+    }
+    const parse = (v: string) => (v.trim() === '' ? null : Number(v))
     let updated = 0
     for (const [channel, value] of Object.entries(fees)) {
-      const pct = value.trim() === '' ? null : Number(value)
-      if (pct == null || !Number.isFinite(pct)) continue
-      const { data, error } = await supabase
-        .from('orders')
-        .update({ fee_pct: pct })
-        .eq('user_id', user.id)
-        .eq('external_source', channel)
-        .is('fee_pct', null)
-        .select('id')
-      if (error) { setBackfillResult(error.message); setBackfilling(false); return }
-      updated += (data || []).length
+      const pct = parse(value.pct)
+      const fixed = parse(value.fixed)
+      if (pct == null && fixed == null) continue
+
+      // Percentage and flat fee are filled in independently, each only where
+      // it's missing — an order that already carries one keeps it.
+      if (pct != null) {
+        const { data, error } = await supabase
+          .from('orders').update({ fee_pct: pct })
+          .eq('user_id', user.id).eq('external_source', channel).is('fee_pct', null)
+          .select('id')
+        if (error) { setBackfillResult(error.message); setBackfilling(false); return }
+        updated += (data || []).length
+      }
+      if (fixed != null) {
+        const { data, error } = await supabase
+          .from('orders').update({ fee_fixed: fixed })
+          .eq('user_id', user.id).eq('external_source', channel).is('fee_fixed', null)
+          .select('id')
+        if (error) { setBackfillResult(error.message); setBackfilling(false); return }
+        updated += (data || []).length
+      }
     }
     setBackfillResult(updated === 0 ? 'Nothing to update — every imported order already has a fee.' : `Updated ${updated} order${updated === 1 ? '' : 's'}.`)
     setBackfilling(false)
@@ -202,6 +224,9 @@ export default function SettingsPage() {
         fee_pct_etsy: num(String(feeEtsy)),
         fee_pct_ebay: num(String(feeEbay)),
         fee_pct_shopify: num(String(feeShopify)),
+        fee_fixed_etsy: num(String(feeFixedEtsy)),
+        fee_fixed_ebay: num(String(feeFixedEbay)),
+        fee_fixed_shopify: num(String(feeFixedShopify)),
       })
       .eq('id', user.id)
     if (error) console.warn('Failed saving settings', error)
@@ -256,7 +281,7 @@ export default function SettingsPage() {
                 Each marketplace takes a different cut, so profit on an imported order is only right once these are set.
                 Applied to new imports automatically. Leave blank to use the default above.
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <div>
                   <label className={labelClass}>Etsy (%)</label>
                   <input value={feeEtsy} onChange={e => setFeeEtsy(e.target.value)} type="number" step="0.1" className={inputClass} placeholder="e.g. 6.5" />
@@ -269,7 +294,22 @@ export default function SettingsPage() {
                   <label className={labelClass}>Shopify (%)</label>
                   <input value={feeShopify} onChange={e => setFeeShopify(e.target.value)} type="number" step="0.1" className={inputClass} placeholder="e.g. 2.9" />
                 </div>
+                <div>
+                  <label className={labelClass}>Etsy ($/order)</label>
+                  <input value={feeFixedEtsy} onChange={e => setFeeFixedEtsy(e.target.value)} type="number" step="0.01" className={inputClass} placeholder="e.g. 0.20" />
+                </div>
+                <div>
+                  <label className={labelClass}>eBay ($/order)</label>
+                  <input value={feeFixedEbay} onChange={e => setFeeFixedEbay(e.target.value)} type="number" step="0.01" className={inputClass} placeholder="e.g. 0.40" />
+                </div>
+                <div>
+                  <label className={labelClass}>Shopify ($/order)</label>
+                  <input value={feeFixedShopify} onChange={e => setFeeFixedShopify(e.target.value)} type="number" step="0.01" className={inputClass} placeholder="e.g. 0.30" />
+                </div>
               </div>
+              <p className="text-gray-600 text-xs mt-2">
+                The flat per-order charge matters most on cheap items: on a $1 sale, eBay&apos;s ~$0.40 costs you more than its percentage does.
+              </p>
               <p className="text-gray-600 text-xs mt-2">
                 Check your own statements — fees vary by category, store subscription and country. These are only starting points.
               </p>
