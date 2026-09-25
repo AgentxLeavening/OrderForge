@@ -443,10 +443,10 @@ export default function NewOrderModal({ userId, onClose, onCreated }: Props) {
               onChange={e => setType(e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-indigo-500"
             >
-              <option value="commission">🎨 Commission / Craft</option>
-              <option value="print_job">🖨️ 3D Print Job</option>
-              <option value="card_lot">🃏 Card Lot</option>
-              <option value="wholesale">📦 Wholesale</option>
+              <option value="commission">Commission / Craft</option>
+              <option value="print_job">3D Print Job</option>
+              <option value="card_lot">Card Lot</option>
+              <option value="wholesale">Wholesale</option>
               <option value="other">Other</option>
             </select>
           </div>

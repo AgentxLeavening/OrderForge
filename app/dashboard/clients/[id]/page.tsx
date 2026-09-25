@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
+import OrderTypeIcon from '@/app/components/OrderTypeIcon'
 import {
   amountDue,
   isOwed,
@@ -52,14 +53,6 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`
-
-const TYPE_EMOJI: Record<string, string> = {
-  commission: '🎨',
-  print_job: '🖨️',
-  card_lot: '🃏',
-  wholesale: '📦',
-  other: '📋',
-}
 
 export default function ClientDetailPage() {
   const router = useRouter()
@@ -334,7 +327,7 @@ export default function ClientDetailPage() {
                   className="flex items-center justify-between bg-gray-800 hover:border-indigo-500 border border-gray-700 rounded-xl px-4 py-3 transition"
                 >
                   <div className="flex items-center gap-3">
-                    <span className="text-lg">{TYPE_EMOJI[order.type] || '📋'}</span>
+                    <OrderTypeIcon type={order.type} className="text-lg" />
                     <div>
                       <p className="text-white text-sm font-medium">{order.title}</p>
                       <p className="text-gray-500 text-xs">{order.order_number}</p>
