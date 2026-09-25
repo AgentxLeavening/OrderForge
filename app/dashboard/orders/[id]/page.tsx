@@ -59,11 +59,11 @@ type ProductOption = {
 }
 
 const TYPE_OPTIONS = [
-  { value: 'commission', label: '🎨 Commission / Craft' },
-  { value: 'print_job', label: '🖨️ 3D Print Job' },
-  { value: 'card_lot', label: '🃏 Card Lot' },
-  { value: 'wholesale', label: '📦 Wholesale' },
-  { value: 'other', label: '📋 Other' },
+  { value: 'commission', label: 'Commission / Craft' },
+  { value: 'print_job', label: '3D Print Job' },
+  { value: 'card_lot', label: 'Card Lot' },
+  { value: 'wholesale', label: 'Wholesale' },
+  { value: 'other', label: 'Other' },
 ]
 
 const STATUS_OPTIONS = [

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
+import OrderTypeIcon from '@/app/components/OrderTypeIcon'
 import { dueLabel, groupByDue, type DueBucket, type ScheduleOrder } from '@/lib/schedule'
 
 type Order = ScheduleOrder & {
@@ -13,10 +14,6 @@ type Order = ScheduleOrder & {
   buyer_name: string | null
   sales_channel: string | null
   clients?: { name: string }[] | null
-}
-
-const TYPE_EMOJI: Record<string, string> = {
-  commission: '🎨', print_job: '🖨️', card_lot: '🃏', wholesale: '📦', other: '📋',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -105,7 +102,7 @@ export default function SchedulePage() {
                       const clientName = Array.isArray(order.clients) ? order.clients[0]?.name : undefined
                       return (
                         <div key={order.id} className="flex flex-wrap items-center gap-3 bg-gray-800 rounded-xl px-4 py-3">
-                          <span className="text-base shrink-0">{TYPE_EMOJI[order.type] || '📋'}</span>
+                          <OrderTypeIcon type={order.type} className="text-base shrink-0" />
                           <Link href={`/dashboard/orders/${order.id}`} className="min-w-0 flex-1">
                             <p className="text-white text-sm font-medium truncate hover:text-indigo-300 transition">{order.title}</p>
                             <p className="text-gray-500 text-xs truncate">

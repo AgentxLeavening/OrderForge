@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, type MouseEvent } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import NewOrderModal, { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
+import OrderTypeIcon from '@/app/components/OrderTypeIcon'
 import DashboardWidget from '@/app/components/DashboardWidget'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import { isLowStock, unitShort } from '@/lib/inventory'
@@ -88,14 +89,6 @@ const COLUMNS = [
 const ARCHIVE_STATUSES = ['complete', 'cancelled']
 const ACTIVE_COLUMNS = COLUMNS.filter(c => !ARCHIVE_STATUSES.includes(c.key))
 const ARCHIVE_COLUMNS = COLUMNS.filter(c => ARCHIVE_STATUSES.includes(c.key))
-
-const TYPE_EMOJI: Record<string, string> = {
-  commission: '🎨',
-  print_job: '🖨️',
-  card_lot: '🃏',
-  wholesale: '📦',
-  other: '📋',
-}
 
 const DEFAULT_LAYOUT = ['stats', 'kanban', 'analytics']
 
@@ -705,7 +698,7 @@ export default function DashboardPage() {
             {/* Always-visible row: at-a-glance identity, plus the
                 expander. Collapsed, this is the whole card. */}
             <div className="flex items-center gap-2">
-              <span className="text-base shrink-0">{TYPE_EMOJI[order.type] || '📋'}</span>
+              <OrderTypeIcon type={order.type} className="text-base shrink-0" />
 
               <div className="min-w-0 flex-1">
                 <p className="text-white text-sm font-medium leading-snug truncate">{order.title}</p>
