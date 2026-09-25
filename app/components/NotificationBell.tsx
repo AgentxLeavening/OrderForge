@@ -39,7 +39,8 @@ function ago(iso: string): string {
  * own. That rule lives in the database triggers (migration 036), so every
  * source counts equally and nothing has to be repeated per code path.
  */
-export default function NotificationBell() {
+export default function NotificationBell({ variant = 'header', collapsed = false }: { variant?: 'header' | 'sidebar'; collapsed?: boolean }) {
+  const inSidebar = variant === 'sidebar'
   const [items, setItems] = useState<Notification[]>([])
   const [open, setOpen] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -99,14 +100,21 @@ export default function NotificationBell() {
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
         aria-label={unread.length > 0 ? `Notifications, ${unread.length} unread` : 'Notifications'}
-        className="relative p-2 rounded-lg text-gray-300 hover:text-white hover:bg-gray-800 transition focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        className={`relative rounded-lg text-gray-300 hover:text-white hover:bg-gray-800 transition focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+          inSidebar
+            ? `flex items-center gap-3 w-full rounded-xl text-sm font-medium ${collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'}`
+            : 'p-2'
+        }`}
       >
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5" aria-hidden="true">
           <path d="M10 3a4.5 4.5 0 0 0-4.5 4.5c0 3-1.2 4.2-1.7 4.7-.2.2-.06.55.22.55h11.96c.28 0 .42-.35.22-.55-.5-.5-1.7-1.7-1.7-4.7A4.5 4.5 0 0 0 10 3Z" />
           <path d="M8.3 15.2a1.9 1.9 0 0 0 3.4 0" />
         </svg>
+        {inSidebar && !collapsed && <span>Activity</span>}
         {unread.length > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-indigo-500 text-white text-[10px] font-semibold rounded-full flex items-center justify-center">
+          <span className={`absolute min-w-[18px] h-[18px] px-1 bg-indigo-500 text-white text-[10px] font-semibold rounded-full flex items-center justify-center ${
+            inSidebar && !collapsed ? 'right-3 top-1/2 -translate-y-1/2' : '-top-0.5 -right-0.5'
+          }`}>
             {unread.length > 9 ? '9+' : unread.length}
           </span>
         )}
@@ -117,7 +125,13 @@ export default function NotificationBell() {
           On small screens it spans the viewport instead; from `sm` up it hangs
           under the bell as before. */}
       {open && (
-        <div className="fixed left-3 right-3 top-14 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-1 sm:w-80 z-50 bg-gray-900 border border-gray-700 rounded-2xl shadow-xl shadow-black/40 overflow-hidden">
+        <div className={`z-50 bg-gray-900 border border-gray-700 rounded-2xl shadow-xl shadow-black/40 overflow-hidden ${
+          inSidebar
+            // The sidebar clips anything absolutely positioned inside it, so the
+            // panel is fixed beside the sidebar's current edge instead.
+            ? `fixed bottom-3 w-[min(20rem,calc(100vw-5rem))] ${collapsed ? 'left-[4.5rem]' : 'left-[15.5rem]'}`
+            : 'fixed left-3 right-3 top-14 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-1 sm:w-80'
+        }`}>
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800">
             <span className="text-white text-sm font-semibold">Activity</span>
             {unread.length > 0 && (
