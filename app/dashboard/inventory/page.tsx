@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import HelpTour, { HelpButton } from '@/app/components/tour/HelpTour'
+import { inventoryTour } from '@/app/components/tour/inventoryTour'
 import { supabase } from '@/lib/supabase'
-import { INVENTORY_CATEGORIES, INVENTORY_UNITS, categoryLabel, defaultUnitForCategory, unitShort, isLowStock } from '@/lib/inventory'
+import { INVENTORY_CATEGORIES, INVENTORY_UNITS, categoryLabel, defaultUnitForCategory, unitShort, isLowStock, formatUnitCost } from '@/lib/inventory'
 
 type Item = {
   id: string
@@ -20,6 +22,7 @@ export default function InventoryPage() {
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<Item | null>(null)
+  const [showHelp, setShowHelp] = useState(false)
 
   const fetch = async () => {
     const { data } = await supabase.from('inventory_items').select('*').order('created_at', { ascending: false })
@@ -141,7 +144,7 @@ export default function InventoryPage() {
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-white">Inventory</h1>
           <div className="flex items-center gap-4">
-            <Link href="/dashboard/reports/reorder" className="text-sm text-indigo-400 hover:text-indigo-300">Reorder list →</Link>
+            <HelpButton onClick={() => setShowHelp(true)} />
             <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded" onClick={() => setEditing({} as any)}>
               + New Item
             </button>
@@ -194,7 +197,7 @@ export default function InventoryPage() {
                       )}
                     </div>
                     <div className="md:col-span-1 md:text-right text-gray-400 text-sm">
-                      ${Number(it.unit_cost || 0).toFixed(2)}
+                      ${formatUnitCost(it.unit_cost)}
                       <span className="md:hidden text-gray-600"> / {unitShort(it.unit)}</span>
                     </div>
                   </div>
@@ -203,6 +206,16 @@ export default function InventoryPage() {
             </div>
           </div>
         )}
+
+        {/* Sits under the list rather than in the header, where the arrow read
+            as pointing at the Help button next to it. */}
+        {!loading && (
+          <div className="mt-3 flex justify-end">
+            <Link href="/dashboard/reports/reorder" className="text-sm text-indigo-400 hover:text-indigo-300">Reorder list →</Link>
+          </div>
+        )}
+
+        {showHelp && <HelpTour tour={inventoryTour} onClose={() => setShowHelp(false)} />}
 
         {editing && (
           <div className="mt-6 bg-gray-900 border border-gray-800 rounded-2xl p-6">
@@ -221,6 +234,9 @@ function InventoryForm({ item, onSave, onCancel }: { item: Partial<Item>, onSave
   const [unit, setUnit] = useState(item?.unit || defaultUnitForCategory(item?.category || 'material'))
   const [quantity, setQuantity] = useState(String(item?.quantity ?? 0))
   const [unitCost, setUnitCost] = useState(String(item?.unit_cost ?? 0))
+  // What was paid for the whole amount on hand. Not stored — it only exists to
+  // work out the cost per unit, so an existing item always opens with it blank.
+  const [totalCost, setTotalCost] = useState('')
   const [reorderThreshold, setReorderThreshold] = useState(item?.reorder_threshold == null ? '' : String(item.reorder_threshold))
 
   const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500'
@@ -233,6 +249,30 @@ function InventoryForm({ item, onSave, onCancel }: { item: Partial<Item>, onSave
   }
 
   const u = unitShort(unit)
+
+  // Sellers usually know what a spool or a roll cost them, not what a single
+  // gram costs. Entering the total divides it by the quantity on hand; typing a
+  // cost per unit yourself takes over again and clears the total, so the two
+  // boxes can never disagree.
+  const perUnit = (total: string, qty: string) => {
+    const t = Number(total)
+    const q = Number(qty)
+    return total.trim() !== '' && t >= 0 && q > 0 ? String(Number((t / q).toFixed(6))) : null
+  }
+  const onQuantityChange = (v: string) => {
+    setQuantity(v)
+    const next = perUnit(totalCost, v)
+    if (next !== null) setUnitCost(next)
+  }
+  const onTotalChange = (v: string) => {
+    setTotalCost(v)
+    const next = perUnit(v, quantity)
+    if (next !== null) setUnitCost(next)
+  }
+  const onUnitCostChange = (v: string) => {
+    setUnitCost(v)
+    setTotalCost('')
+  }
 
   return (
     <div>
@@ -268,15 +308,28 @@ function InventoryForm({ item, onSave, onCancel }: { item: Partial<Item>, onSave
           <input value={sku} onChange={e => setSku(e.target.value)} placeholder="Optional stock code" className={inputClass} />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className={labelClass}>Quantity on hand ({u})</label>
-            <input value={quantity} onChange={e => setQuantity(e.target.value)} type="number" className={inputClass} />
+        <div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className={labelClass}>Quantity on hand ({u})</label>
+              <input value={quantity} onChange={e => onQuantityChange(e.target.value)} type="number" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Total paid ($) <span className="text-gray-600">(optional)</span></label>
+              <input value={totalCost} onChange={e => onTotalChange(e.target.value)} type="number" step="any" placeholder="e.g. 15.00" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Cost per {u} ($)</label>
+              <input value={unitCost} onChange={e => onUnitCostChange(e.target.value)} type="number" step="any" className={inputClass} />
+            </div>
           </div>
-          <div>
-            <label className={labelClass}>Cost per {u} ($)</label>
-            <input value={unitCost} onChange={e => setUnitCost(e.target.value)} type="number" step="0.01" className={inputClass} />
-          </div>
+          {totalCost.trim() === '' ? (
+            <p className="text-gray-600 text-xs mt-1">Know the total you paid instead? Enter it and we&apos;ll work out the cost per {u}. Or type the cost per {u} yourself.</p>
+          ) : perUnit(totalCost, quantity) !== null ? (
+            <p className="text-indigo-300 text-xs mt-1">${totalCost} ÷ {quantity} {u} = ${formatUnitCost(perUnit(totalCost, quantity))} per {u}. Typing a cost per {u} yourself replaces this.</p>
+          ) : (
+            <p className="text-amber-400 text-xs mt-1">Enter the quantity on hand first, so the total can be divided.</p>
+          )}
         </div>
 
         <div>

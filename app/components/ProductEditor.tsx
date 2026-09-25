@@ -196,7 +196,7 @@ export default function ProductEditor({ userId, product, onSaved, onCancel }: Pr
                   <input className={cellClass} value={it.quantity} onChange={e => updateItem(idx, 'quantity', Number(e.target.value))} type="number" />
                   {u && <span className="text-[10px] text-gray-500 pl-1">{u}</span>}
                 </div>
-                <input className={`col-span-3 ${cellClass}`} value={it.unit_cost} onChange={e => updateItem(idx, 'unit_cost', Number(e.target.value))} type="number" step="0.01" title={linked ? 'From inventory (editable)' : undefined} />
+                <input className={`col-span-3 ${cellClass}`} value={it.unit_cost} onChange={e => updateItem(idx, 'unit_cost', Number(e.target.value))} type="number" step="any" title={linked ? 'From inventory (editable)' : undefined} />
                 <button className="col-span-1 text-red-500 hover:text-red-400 text-lg leading-none pt-1" onClick={() => removeItem(idx)} title="Remove">✕</button>
               </div>
             )

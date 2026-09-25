@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { formatUnitCost } from '@/lib/inventory'
 
 type ProductItem = {
   id?: string
@@ -41,7 +42,7 @@ export default function ProductCard({ product, onEdit, onDelete, compact = false
             {(product.items || []).map((it, i) => (
               <li key={i} className="flex items-center justify-between">
                 <span className="text-gray-200">{it.name} × {it.quantity}</span>
-                <span className="text-gray-400">${(Number(it.unit_cost) || 0).toFixed(2)}</span>
+                <span className="text-gray-400">${formatUnitCost(it.unit_cost)}</span>
               </li>
             ))}
             {(product.items || []).length === 0 && (
