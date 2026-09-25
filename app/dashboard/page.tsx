@@ -5,6 +5,8 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import NewOrderModal, { CHANNEL_OPTIONS } from '@/app/components/NewOrderModal'
 import OrderTypeIcon from '@/app/components/OrderTypeIcon'
+import HelpTour, { HelpButton } from '@/app/components/tour/HelpTour'
+import { dashboardTour } from '@/app/components/tour/dashboardTour'
 import DashboardWidget from '@/app/components/DashboardWidget'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import { isLowStock, unitShort } from '@/lib/inventory'
@@ -107,6 +109,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [layout, setLayout] = useState<string[]>(DEFAULT_LAYOUT)
+  const [showHelp, setShowHelp] = useState(false)
   const [savingLayout, setSavingLayout] = useState(false)
   // Kanban cards start collapsed — with marketplace orders importing, a column
   // like Shipped gets long enough that full cards make the board unusable to
@@ -954,6 +957,8 @@ export default function DashboardPage() {
               ))}
             </select>
 
+            <HelpButton onClick={() => setShowHelp(true)} />
+
             <button
               onClick={() => setShowModal(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-3 rounded-lg transition"
@@ -1091,6 +1096,8 @@ export default function DashboardPage() {
           </Droppable>
         </DragDropContext>
       </main>
+
+      {showHelp && <HelpTour tour={dashboardTour} onClose={() => setShowHelp(false)} />}
 
       {/* New Order Modal */}
       {showModal && profile && (
