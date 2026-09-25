@@ -1,6 +1,6 @@
 // Shared inventory taxonomy: item categories and units of measure.
-// Materials (filament, resin) are tracked by weight/volume; finished goods and
-// components are counted as discrete units ("each").
+// Materials (filament, resin, leather, fabric) are tracked by weight, volume or
+// length; finished goods and components are counted as discrete units ("each").
 
 export type InventoryCategory = {
   value: string
@@ -9,7 +9,7 @@ export type InventoryCategory = {
 }
 
 export const INVENTORY_CATEGORIES: InventoryCategory[] = [
-  { value: 'material', label: 'Material (by weight/volume)', defaultUnit: 'g' },
+  { value: 'material', label: 'Material (weight, volume or length)', defaultUnit: 'g' },
   { value: 'finished', label: 'Finished good', defaultUnit: 'each' },
   { value: 'component', label: 'Component / part', defaultUnit: 'each' },
   { value: 'packaging', label: 'Packaging', defaultUnit: 'each' },
@@ -21,6 +21,10 @@ export const INVENTORY_UNITS: { value: string; label: string }[] = [
   { value: 'kg', label: 'kilograms (kg)' },
   { value: 'ml', label: 'milliliters (ml)' },
   { value: 'l', label: 'liters (l)' },
+  { value: 'in', label: 'inches (in)' },
+  { value: 'ft', label: 'feet (ft)' },
+  { value: 'yd', label: 'yards (yd)' },
+  { value: 'm', label: 'meters (m)' },
 ]
 
 export const categoryLabel = (value: string | null | undefined) =>
@@ -42,3 +46,9 @@ export const isLowStock = (item: {
   if (item.reorder_threshold == null) return false
   return (Number(item.quantity) || 0) <= Number(item.reorder_threshold)
 }
+
+// Cost per unit is often a fraction of a cent (a $15, 1000 g spool is $0.015/g),
+// so two decimals would show it as $0.01 or $0.02. Keeps at least two decimals
+// ("$15.00", "$0.50") and up to four when the value needs them.
+export const formatUnitCost = (value: number | string | null | undefined) =>
+  (Number(value) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
