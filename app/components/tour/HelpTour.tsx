@@ -30,6 +30,10 @@ export type Slide = {
   initial: TourState
   steps: Step[]
   scene: (s: TourState) => ReactNode
+  /** Something the pointer is holding, drawn attached to it so it travels with
+      the pointer — a card or a section being dragged. Return null when the
+      pointer is empty-handed. */
+  carried?: (s: TourState) => ReactNode
 }
 
 export type Tour = { title: string; slides: Slide[] }
@@ -138,6 +142,7 @@ function Stage({ slide }: { slide: Slide }) {
           >
             <path d="M4 2l16 9-7 2-3 7z" fill="#fff" stroke="#111827" strokeWidth="1.5" strokeLinejoin="round" />
           </svg>
+          {slide.carried?.(state)}
         </div>
       )}
     </div>
