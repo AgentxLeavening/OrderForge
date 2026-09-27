@@ -1,6 +1,6 @@
 'use client'
 
-import { useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useSyncExternalStore, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -74,6 +74,19 @@ export default function DashboardNav() {
   const collapsed = useSyncExternalStore(subscribe, readCollapsed, () => false)
   const toggle = () => writeCollapsed(!collapsed)
 
+  // Below md, the expanded sidebar is a drawer over the page rather than a
+  // column that pushes it — 240px is too much of a phone screen to give up.
+  // Picking a link or the backdrop closes it back to the icon rail; Escape
+  // matches every other overlay in this app.
+  const onNavigate = () => { if (window.innerWidth < 768) writeCollapsed(true) }
+
+  useEffect(() => {
+    if (collapsed) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && window.innerWidth < 768) writeCollapsed(true) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [collapsed])
+
   const signOut = async () => {
     await supabase.auth.signOut()
     router.push('/login')
@@ -88,64 +101,85 @@ export default function DashboardNav() {
   const rowSize = collapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'
 
   return (
-    <aside
-      className={`sticky top-0 h-screen shrink-0 flex flex-col bg-gray-900 border-r border-gray-800 transition-[width] duration-200 ${collapsed ? 'w-16' : 'w-60'}`}
-    >
-      <div className={`flex items-center py-3 ${collapsed ? 'justify-center px-2' : 'justify-between px-4'}`}>
-        {!collapsed && <Link href="/dashboard" className="text-indigo-400 font-bold text-lg">OrderForge</Link>}
-        <button
-          type="button"
-          onClick={toggle}
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? 'Expand menu' : 'Collapse menu'}
-          title={collapsed ? 'Expand menu' : 'Collapse menu'}
-          className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5" aria-hidden="true">
-            <rect x="3" y="3.5" width="14" height="13" rx="2" />
-            <line x1="8" y1="3.5" x2="8" y2="16.5" />
-            {collapsed ? <path d="m11.5 8 2 2-2 2" /> : <path d="m13.5 8-2 2 2 2" />}
-          </svg>
-        </button>
-      </div>
+    <>
+      {/* Backdrop: only exists below md, and only while the drawer is open —
+          desktop keeps pushing the page instead, no dimming needed. */}
+      {!collapsed && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50 md:hidden"
+          onClick={() => writeCollapsed(true)}
+          aria-hidden="true"
+        />
+      )}
 
-      <nav aria-label="Main" className="flex-1 overflow-y-auto px-2 py-1 space-y-1">
-        {LINKS.map(l => {
-          const active = l.href === activeHref
-          return (
-            <Link
-              key={l.href}
-              href={l.href}
-              title={collapsed ? `${l.label} — ${l.hint}` : l.hint}
-              aria-label={collapsed ? l.label : undefined}
-              aria-current={active ? 'page' : undefined}
-              className={`${rowBase} ${rowSize} ${
-                active ? 'bg-indigo-500/15 text-indigo-300' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-              }`}
-            >
-              <Icon>{ICONS[l.href]}</Icon>
-              {!collapsed && <span>{l.label}</span>}
-            </Link>
-          )
-        })}
-      </nav>
+      <aside
+        // 100vh on a phone includes the strip behind the browser's address bar, which
+        // pushed Sign out off the bottom of the screen. dvh is the height actually
+        // visible; h-screen stays as the fallback for browsers without it.
+        //
+        // Collapsed (the icon rail) stays `sticky` at every width, inline in the
+        // page's flex row. Expanded is `fixed` below md — out of flow, so it
+        // overlays the page as a drawer rather than shrinking it — and back to
+        // `sticky` at md and up, where there's room for it to push the page.
+        className={`${collapsed ? 'sticky' : 'fixed md:sticky'} top-0 left-0 z-40 h-screen supports-[height:100dvh]:h-dvh shrink-0 flex flex-col bg-gray-900 border-r border-gray-800 transition-[width] duration-200 ${collapsed ? 'w-16' : 'w-60'}`}
+      >
+        <div className={`shrink-0 flex items-center py-3 ${collapsed ? 'justify-center px-2' : 'justify-between px-4'}`}>
+          {!collapsed && <Link href="/dashboard" onClick={onNavigate} className="text-indigo-400 font-bold text-lg">OrderForge</Link>}
+          <button
+            type="button"
+            onClick={toggle}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? 'Expand menu' : 'Collapse menu'}
+            title={collapsed ? 'Expand menu' : 'Collapse menu'}
+            className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5" aria-hidden="true">
+              <rect x="3" y="3.5" width="14" height="13" rx="2" />
+              <line x1="8" y1="3.5" x2="8" y2="16.5" />
+              {collapsed ? <path d="m11.5 8 2 2-2 2" /> : <path d="m13.5 8-2 2 2 2" />}
+            </svg>
+          </button>
+        </div>
 
-      <div className="px-2 py-3 border-t border-gray-800 space-y-1">
-        <NotificationBell variant="sidebar" collapsed={collapsed} />
-        <button
-          onClick={signOut}
-          title="Sign out"
-          aria-label={collapsed ? 'Sign out' : undefined}
-          className={`${rowBase} ${rowSize} w-full text-gray-400 hover:bg-gray-800 hover:text-white`}
-        >
-          <Icon>
-            <path d="M8 3.5H5A1.5 1.5 0 0 0 3.5 5v10A1.5 1.5 0 0 0 5 16.5h3" />
-            <path d="M12.5 6.5 16 10l-3.5 3.5" />
-            <line x1="16" y1="10" x2="8" y2="10" />
-          </Icon>
-          {!collapsed && <span>Sign out</span>}
-        </button>
-      </div>
-    </aside>
+        <nav aria-label="Main" className="flex-1 overflow-y-auto px-2 py-1 space-y-1">
+          {LINKS.map(l => {
+            const active = l.href === activeHref
+            return (
+              <Link
+                key={l.href}
+                href={l.href}
+                onClick={onNavigate}
+                title={collapsed ? `${l.label} — ${l.hint}` : l.hint}
+                aria-label={collapsed ? l.label : undefined}
+                aria-current={active ? 'page' : undefined}
+                className={`${rowBase} ${rowSize} ${
+                  active ? 'bg-indigo-500/15 text-indigo-300' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                }`}
+              >
+                <Icon>{ICONS[l.href]}</Icon>
+                {!collapsed && <span>{l.label}</span>}
+              </Link>
+            )
+          })}
+        </nav>
+
+        <div className="shrink-0 px-2 py-3 border-t border-gray-800 space-y-1">
+          <NotificationBell variant="sidebar" collapsed={collapsed} />
+          <button
+            onClick={signOut}
+            title="Sign out"
+            aria-label={collapsed ? 'Sign out' : undefined}
+            className={`${rowBase} ${rowSize} w-full text-gray-400 hover:bg-gray-800 hover:text-white`}
+          >
+            <Icon>
+              <path d="M8 3.5H5A1.5 1.5 0 0 0 3.5 5v10A1.5 1.5 0 0 0 5 16.5h3" />
+              <path d="M12.5 6.5 16 10l-3.5 3.5" />
+              <line x1="16" y1="10" x2="8" y2="10" />
+            </Icon>
+            {!collapsed && <span>Sign out</span>}
+          </button>
+        </div>
+      </aside>
+    </>
   )
 }
